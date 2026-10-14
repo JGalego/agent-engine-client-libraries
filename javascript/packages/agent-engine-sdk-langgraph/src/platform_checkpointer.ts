@@ -1,5 +1,6 @@
 /** Request-scoped native versus OE-durable LangGraph checkpoint routing. */
 
+import { clone } from "@bufbuild/protobuf";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import {
   BaseCheckpointSaver,
@@ -19,10 +20,12 @@ import {
   advanceStepOrdinal,
   completeExecutionCommand,
   currentAttemptContext,
+  currentCancelledHistory,
   currentStepOrdinal,
   finalizeCurrentStepCommand,
   getCurrentOeUrl,
   WorkflowClient,
+  StateSnapshotSchema,
   type AttemptContext,
 } from "@mongodb-js/agent-engine-runner-shared";
 
@@ -35,7 +38,8 @@ import {
 type PlatformWorkflowClient = Pick<
   WorkflowClient,
   "completeExecution" | "finalizeStep"
->;
+> &
+  Partial<Pick<WorkflowClient, "finalizeStepWithAcknowledgement">>;
 type WorkflowClientFactory = (oeUrl: string) => PlatformWorkflowClient;
 
 export class UnsupportedDurableGraphError extends Error {
@@ -270,12 +274,31 @@ export class PlatformCheckpointer extends BaseCheckpointSaver<string | number> {
           attempt.replayMode,
         ),
       );
-      const entries = await this.workflowClient().finalizeStep(command);
+      // Save the exact submitted state before awaiting transport or reducer
+      // mutations, but promote it only once OE acknowledges the root step.
+      if (command.state === undefined) {
+        throw new Error("root finalization requires state");
+      }
+      const submittedState = clone(StateSnapshotSchema, command.state);
+      const client = this.workflowClient();
+      const acknowledgement =
+        client.finalizeStepWithAcknowledgement === undefined
+          ? {
+              entries: await client.finalizeStep(command),
+              sourceStateHash: undefined,
+            }
+          : await client.finalizeStepWithAcknowledgement(command);
+      const entries = acknowledgement.entries;
       if (entries.length > 0) {
         throw new UnsupportedDurableGraphError(
           "settled step finalization returned suspension entries",
         );
       }
+      currentCancelledHistory()?.acknowledge(
+        submittedState,
+        command.stepOrdinal,
+        acknowledgement.sourceStateHash,
+      );
       advanceStepOrdinal(Number(command.stepOrdinal));
     }
     return result;

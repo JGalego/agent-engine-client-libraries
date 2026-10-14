@@ -95,14 +95,16 @@ class BundledTool:
 
     @property
     def registration_metadata(self) -> dict[str, Any]:
-        """Return the shared AER and Tool Pod registration policy."""
+        """Return detached AER/Tool Pod policy, with delegated binding outside the schema."""
         operation = self.operation
+        auth = self.connector.definitions.auth
+        delegated = auth if auth is not None and auth.type == "oauth" else None
         return {
             "name": operation.name,
             "description": operation.description.strip() or f"REST connector tool {operation.name}",
             "is_local": False,
-            "provider_type": None,
-            "scopes": [],
+            "provider_type": delegated.provider_type if delegated else None,
+            "scopes": list(delegated.scopes) if delegated else [],
             "network": self.network,
             "timeout_seconds": DEFAULT_EXECUTION_TIMEOUT_SECONDS,
             "redact_fields": [],

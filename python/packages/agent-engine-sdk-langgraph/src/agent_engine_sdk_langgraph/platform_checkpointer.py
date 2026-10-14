@@ -14,19 +14,6 @@ import logging
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any, cast
 
-from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import (
-    BaseCheckpointSaver,
-    ChannelVersions,
-    Checkpoint,
-    CheckpointMetadata,
-    CheckpointTuple,
-    empty_checkpoint,
-)
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.errors import GraphInterrupt
-from langgraph.types import Interrupt, Send
-
 from agent_engine_runner_shared.context import get_current_oe_url
 from agent_engine_runner_shared.generated.workflow.v1.activity_pb2 import (
     ACTIVITY_KIND_TOOL,
@@ -59,7 +46,20 @@ from agent_engine_runner_shared.workflow.context import (
     record_interrupted_activity,
     record_observed_activity,
 )
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import (
+    BaseCheckpointSaver,
+    ChannelVersions,
+    Checkpoint,
+    CheckpointMetadata,
+    CheckpointTuple,
+    empty_checkpoint,
+)
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Interrupt, Send
 
+from agent_engine_runner_shared.workflow import current_cancelled_history
 from .durable_errors import UnsupportedDurableGraphError
 from .workflow_state import (
     channel_values_to_state_snapshot,
@@ -347,6 +347,13 @@ class PlatformCheckpointer(BaseCheckpointSaver[str]):
             entries = client.finalize_step(command)
         if entries:
             raise RuntimeError("settled step finalization returned suspension entries")
+        history = current_cancelled_history.get()
+        if history is not None and history.matches(context):
+            history.acknowledge(
+                command.state,
+                command.step_ordinal,
+                getattr(entries, "source_state_hash", None),
+            )
         advance_step_ordinal(command.step_ordinal)
 
     async def _finalize_step_async(
@@ -363,6 +370,13 @@ class PlatformCheckpointer(BaseCheckpointSaver[str]):
             entries = await client.finalize_step(command)
         if entries:
             raise RuntimeError("settled step finalization returned suspension entries")
+        history = current_cancelled_history.get()
+        if history is not None and history.matches(context):
+            history.acknowledge(
+                command.state,
+                command.step_ordinal,
+                getattr(entries, "source_state_hash", None),
+            )
         advance_step_ordinal(command.step_ordinal)
 
     @staticmethod

@@ -15,7 +15,16 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from opentelemetry import trace
 
-from agent_engine_runner_shared.secure_llm_proxy import SecureLLMProxy
+from agent_engine_runner_shared.secure_llm_proxy import (
+    GuardrailReviewPending,
+    SecureLLMProxy,
+)
+from agent_engine_sdk_adk.errors import UnsupportedDurableADKError
+from agent_engine_sdk_adk.guardrail_review import (
+    REVIEW_FUNCTION_NAME,
+    pending_response,
+    take_review_continuation,
+)
 from agent_engine_sdk_adk.messages import (
     content_to_platform_messages,
     parse_tool_args,
@@ -64,7 +73,12 @@ class SecureLlm(BaseLlm):
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
         wrapper = self._get_wrapper_or_raise()
-        step = wrapper.next_operational_step()
+        continuation = take_review_continuation(llm_request)
+        if continuation is None:
+            step = wrapper.next_operational_step()
+        else:
+            step = continuation.step
+            wrapper.observe_operational_step(step)
 
         platform_messages = [
             m for c in llm_request.contents for m in content_to_platform_messages(c)
@@ -82,7 +96,16 @@ class SecureLlm(BaseLlm):
 
         tool_schemas = None
         if llm_request.tools_dict:
-            tool_schemas = tools_dict_to_schemas(llm_request.tools_dict)
+            tool_schemas = (
+                tools_dict_to_schemas(
+                    {
+                        name: tool
+                        for name, tool in llm_request.tools_dict.items()
+                        if name != REVIEW_FUNCTION_NAME
+                    }
+                )
+                or None
+            )
 
         proxy = SecureLLMProxy(
             oe_url=wrapper.oe_url,
@@ -93,11 +116,24 @@ class SecureLlm(BaseLlm):
             operational_steps=wrapper.operational_steps,
             stable_operation_identity=has_stable_operation_identity(),
             durable_memory=wrapper.durable_memory,
+            guardrail_review_protocol=True,
+            sdk_handles_guardrail_review_pause=True,
         )
 
-        chunks = await asyncio.to_thread(
-            lambda: list(proxy.stream(messages=platform_messages, step=step))
-        )
+        try:
+            chunks = await asyncio.to_thread(
+                lambda: list(
+                    proxy.stream(
+                        messages=platform_messages,
+                        step=step,
+                        pending_review=continuation.pending if continuation else None,
+                    )
+                )
+            )
+        except GuardrailReviewPending as pending:
+            wrapper.observe_operational_step(pending.step)
+            yield pending_response(pending, llm_request)
+            return
 
         if proxy.last_latest_step_number is not None:
             wrapper.observe_operational_step(proxy.last_latest_step_number)
@@ -140,6 +176,10 @@ def _llm_response_to_content(response: Any) -> types.Content | None:
         parts.append(types.Part.from_text(text=response.content))
     if response.tool_calls:
         for tc in response.tool_calls:
+            if tc.name == REVIEW_FUNCTION_NAME:
+                raise UnsupportedDurableADKError(
+                    "Model output attempted an ADK control call"
+                )
             parts.append(
                 types.Part(
                     function_call=types.FunctionCall(

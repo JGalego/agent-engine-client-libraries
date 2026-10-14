@@ -3,6 +3,7 @@ import {
   AIMessage,
   AIMessageChunk,
   HumanMessage,
+  SystemMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
@@ -15,10 +16,13 @@ import {
 } from "@langchain/langgraph";
 import {
   AttemptContextSchema,
+  MessageRole,
   TenantScopeSchema,
   WorkflowIdentitySchema,
   runWithAttemptContext,
   runWithExecutionContext,
+  currentCancelledHistory,
+  type CancelledHistoryCapture,
   type CompleteExecutionCommand,
   type FinalizeStepCommand,
 } from "@mongodb-js/agent-engine-runner-shared";
@@ -136,6 +140,226 @@ async function expectScratchReleased(
 }
 
 describe("LangGraphBaseAgent durable lifecycle", () => {
+  it.each([false, true])(
+    "preserves the original USER opener when hook input has no user (system=%s)",
+    async (system) => {
+      const saver = new PlatformCheckpointer({
+        native: null,
+        clientFactory: clients().factory,
+      });
+      const graph = {
+        checkpointer: saver,
+        invoke: vi.fn(async () => {
+          throw new Error("stopped before acknowledgement");
+        }),
+      };
+      const agent = new LangGraphBaseAgent(graph as never, [], () => ({
+        messages: system ? [new SystemMessage("system-only input")] : [],
+      }));
+      const { ctx, input } = request();
+      const reports: CancelledHistoryCapture[] = [];
+      await inDurableAttempt(durableAttempt(), async () => {
+        const history = currentCancelledHistory();
+        if (history === null) throw new Error("missing scope");
+        history.reporter = async () => {
+          const capture = agent.captureCancelledHistory();
+          if (capture !== null) reports.push(capture);
+        };
+        await expect(agent.invoke(ctx, input)).rejects.toThrow(
+          "stopped before acknowledgement",
+        );
+      });
+      expect(reports[0]?.openerMessageId).toBe("durable-input:execution");
+      expect(reports[0]?.messages.map((message) => message.id)).toEqual([
+        "durable-input:execution",
+      ]);
+      expect(reports[0]?.messages[0]?.role).toBe(MessageRole.USER);
+      expect(reports[0]?.acceptedStepOrdinal).toBe(0n);
+      expect(reports[0]?.sourceStateHash).toBeUndefined();
+    },
+  );
+
+  it("reports acknowledged root history before releasing scratch without completing a stopped graph", async () => {
+    const fake = clients();
+    const saver = new PlatformCheckpointer({
+      native: null,
+      clientFactory: fake.factory,
+    });
+    const releaseScratch = vi.spyOn(saver, "releaseScratch");
+    const graph = new StateGraph(MessagesAnnotation)
+      .addNode("accepted", () => ({
+        messages: [new AIMessage({ content: "settled", id: "accepted" })],
+      }))
+      .addNode("stopped", () => {
+        throw new Error("execution stopped");
+      })
+      .addEdge(START, "accepted")
+      .addEdge("accepted", "stopped")
+      .addEdge("stopped", END)
+      .compile({ checkpointer: saver as never });
+    const agent = new LangGraphBaseAgent(graph as never);
+    const { ctx, input } = request();
+    const reports: CancelledHistoryCapture[] = [];
+    await inDurableAttempt(durableAttempt(), async () => {
+      const history = currentCancelledHistory();
+      if (history === null) throw new Error("missing scope");
+      history.reporter = async () => {
+        expect(releaseScratch).not.toHaveBeenCalled();
+        expect(
+          await saver.getTuple({ configurable: { thread_id: "session" } }),
+        ).toBeDefined();
+        const capture = agent.captureCancelledHistory();
+        if (capture !== null) reports.push(capture);
+      };
+      await expect(agent.invoke(ctx, input)).rejects.toThrow(
+        "execution stopped",
+      );
+    });
+    expect(reports[0]?.messages.map((message) => message.id)).toEqual([
+      "previous-1",
+      "durable-input:execution",
+      "accepted",
+    ]);
+    expect(reports[0]?.acceptedStepOrdinal).toBe(2n);
+    expect(releaseScratch).toHaveBeenCalledTimes(1);
+    expect(fake.completeExecution).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "tracks the normalized hook opener without duplicating the original prompt (resume=%s)",
+    async (resume) => {
+      const fake = clients();
+      const saver = new PlatformCheckpointer({
+        native: null,
+        clientFactory: fake.factory,
+      });
+      const prepare = vi.fn((_input: AgentInput, hookCtx: RequestContext) => {
+        expect(hookCtx.resume).not.toBe(true);
+        expect(currentCancelledHistory()?.capture()?.openerMessageId).toBe(
+          "durable-input:execution",
+        );
+        return {
+          messages: [
+            new HumanMessage({ content: "prior user turn", id: "hook-prior" }),
+            new HumanMessage({ content: "normalized", id: "hook-opener" }),
+          ],
+        };
+      });
+      const graph = {
+        checkpointer: saver,
+        invoke: vi.fn(async (input: { messages: BaseMessage[] }) => {
+          expect(input.messages.map((message) => message.id)).toEqual([
+            "hook-prior",
+            "hook-opener",
+          ]);
+          // No acknowledged step: the turn is only its opener, not the hook history.
+          expect(
+            currentCancelledHistory()
+              ?.capture()
+              ?.messages.map((message) => message.id),
+          ).toEqual(["hook-opener"]);
+          expect(currentCancelledHistory()?.capture()?.openerMessageId).toBe(
+            "hook-opener",
+          );
+          throw new Error("stopped");
+        }),
+        getState: vi.fn(),
+      };
+      const agent = new LangGraphBaseAgent(graph as never, [], prepare);
+      const { ctx, input } = request();
+      const reports: CancelledHistoryCapture[] = [];
+      await inDurableAttempt(durableAttempt({ replay: true }), async () => {
+        const history = currentCancelledHistory();
+        if (history === null) throw new Error("missing scope");
+        history.reporter = async () => {
+          const capture = agent.captureCancelledHistory();
+          if (capture !== null) reports.push(capture);
+        };
+        await expect(
+          agent.invoke(
+            {
+              ...ctx,
+              resume,
+              resumeData: resume ? { activity: "answer-not-opener" } : null,
+            },
+            input,
+          ),
+        ).rejects.toThrow("stopped");
+        expect(agent.captureCancelledHistory()).toBeNull();
+      });
+      expect(reports[0]).toMatchObject({
+        openerMessageId: "hook-opener",
+        acceptedStepOrdinal: 0n,
+        messages: [{ id: "hook-opener" }],
+      });
+      expect(reports[0]?.sourceStateHash).toBeUndefined();
+      expect(fake.completeExecution).not.toHaveBeenCalled();
+    },
+  );
+
+  it("selects the newest human opener when a historical message matches the request", async () => {
+    // The current opener is rewritten ('current' -> 'REWRITTEN') while a historical
+    // message still carries the request content; the newest human must win.
+    const saver = new PlatformCheckpointer({
+      native: null,
+      clientFactory: clients().factory,
+    });
+    const prepare = vi.fn(() => ({
+      messages: [
+        new HumanMessage({ content: "current", id: "hook-prior" }),
+        new HumanMessage({ content: "REWRITTEN", id: "hook-opener" }),
+      ],
+    }));
+    const graph = {
+      checkpointer: saver,
+      invoke: vi.fn(async () => {
+        expect(currentCancelledHistory()?.capture()?.openerMessageId).toBe(
+          "hook-opener",
+        );
+        throw new Error("stopped");
+      }),
+      getState: vi.fn(),
+    };
+    const agent = new LangGraphBaseAgent(graph as never, [], prepare);
+    const { ctx, input } = request();
+    await inDurableAttempt(durableAttempt({ replay: true }), async () => {
+      const history = currentCancelledHistory();
+      if (history === null) throw new Error("missing scope");
+      await expect(agent.invoke(ctx, input)).rejects.toThrow("stopped");
+    });
+  });
+
+  it("captures the original request opener when input preparation fails", async () => {
+    const saver = new PlatformCheckpointer({
+      native: null,
+      clientFactory: clients().factory,
+    });
+    const agent = new LangGraphBaseAgent(
+      { checkpointer: saver } as never,
+      [],
+      () => {
+        throw new Error("input hook failed");
+      },
+    );
+    const { ctx, input } = request();
+    let capture: CancelledHistoryCapture | null = null;
+    await inDurableAttempt(durableAttempt(), async () => {
+      const history = currentCancelledHistory();
+      if (history === null) throw new Error("missing scope");
+      history.reporter = async () => {
+        capture = agent.captureCancelledHistory();
+      };
+      await expect(agent.invoke(ctx, input)).rejects.toThrow(
+        "input hook failed",
+      );
+    });
+    expect(capture).toMatchObject({
+      openerMessageId: "durable-input:execution",
+      acceptedStepOrdinal: 0n,
+      messages: [{ id: "durable-input:execution" }],
+    });
+  });
+
   it.each(["invoke", "stream"] as const)(
     "keeps same-named compiled-subgraph messages distinct across replay during %s",
     async (mode) => {

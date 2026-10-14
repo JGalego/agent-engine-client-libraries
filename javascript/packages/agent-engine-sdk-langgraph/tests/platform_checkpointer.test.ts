@@ -15,6 +15,7 @@ import {
   TenantScopeSchema,
   WorkflowIdentitySchema,
   currentStepOrdinal,
+  currentCancelledHistory,
   runWithAttemptContext,
   runWithExecutionContext,
 } from "@mongodb-js/agent-engine-runner-shared";
@@ -79,6 +80,184 @@ function clients() {
 }
 
 describe("PlatformCheckpointer", () => {
+  it("keeps acknowledged history isolated for concurrent attempts on a shared saver", async () => {
+    let release!: () => void;
+    const bothActive = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fake = clients();
+    fake.finalizeStep.mockImplementation(async (command) => {
+      if (command.attemptId === "left") await bothActive;
+      else release();
+      return [];
+    });
+    const saver = new PlatformCheckpointer({
+      native: null,
+      clientFactory: fake.factory,
+    });
+    await runWithExecutionContext(
+      { executionId: "execution", wrapper: null, oeUrl: "http://oe" },
+      () =>
+        Promise.all(
+          ["left", "right"].map((id) =>
+            runWithAttemptContext(
+              attempt({ id, fence: id === "left" ? 7n : 8n }),
+              async () => {
+                const history = currentCancelledHistory();
+                if (history === null) throw new Error("missing history scope");
+                const state = channelValuesToStateSnapshot({
+                  messages: [new HumanMessage({ content: id, id })],
+                });
+                const opener = state.messages[0];
+                if (opener === undefined) throw new Error("missing opener");
+                history.setInput(opener);
+                await saver.put(
+                  { configurable: { thread_id: "same-thread" } },
+                  checkpoint(id, {
+                    messages: [new HumanMessage({ content: id, id })],
+                  }),
+                  loopMetadata,
+                  {},
+                );
+                expect(
+                  history.capture()?.messages.map((message) => message.id),
+                ).toEqual([id]);
+                await saver.releaseScratch(
+                  attempt({ id, fence: id === "left" ? 7n : 8n }),
+                );
+                history.close();
+              },
+            ),
+          ),
+        ),
+    );
+  });
+
+  it("captures only immutable acknowledged root checkpoints, not failed or nested writes", async () => {
+    const fake = clients();
+    const saver = new PlatformCheckpointer({
+      native: null,
+      clientFactory: () => ({
+        ...fake.factory(),
+        finalizeStepWithAcknowledgement: async (command) => ({
+          entries: await fake.finalizeStep(command),
+          sourceStateHash: "original-authoritative-hash",
+        }),
+      }),
+    });
+    const opener = new HumanMessage({ content: "hello", id: "opener" });
+    await runWithExecutionContext(
+      { executionId: "execution", wrapper: null, oeUrl: "http://oe" },
+      () =>
+        runWithAttemptContext(attempt(), async () => {
+          const history = currentCancelledHistory();
+          if (history === null) throw new Error("missing history scope");
+          const inputState = channelValuesToStateSnapshot({
+            messages: [opener],
+          });
+          const inputOpener = inputState.messages[0];
+          if (inputOpener === undefined) throw new Error("missing opener");
+          history.setInput(inputOpener);
+          const config = { configurable: { thread_id: "session" } };
+          const accepted = checkpoint("accepted", {
+            messages: [opener],
+            value: 1,
+          });
+          await saver.put(config, accepted, loopMetadata, {});
+          const captured = history.capture();
+          accepted.channel_values["value"] = 999;
+          opener.content = "mutated";
+          await saver.put(
+            { configurable: { thread_id: "session", checkpoint_ns: "child" } },
+            checkpoint("nested", { value: "not-root" }),
+            loopMetadata,
+            {},
+          );
+          fake.finalizeStep.mockRejectedValueOnce(
+            new Error("transport failed"),
+          );
+          await expect(
+            saver.put(
+              config,
+              checkpoint("unaccepted", { messages: [], value: 2 }),
+              loopMetadata,
+              {},
+            ),
+          ).rejects.toThrow("transport failed");
+          expect(history.capture()).toEqual(captured);
+          expect(history.capture()?.acceptedStepOrdinal).toBe(1n);
+          expect(history.capture()?.sourceStateHash).toBe(
+            "original-authoritative-hash",
+          );
+          expect((await saver.getTuple(config))?.checkpoint.id).toBe(
+            "unaccepted",
+          );
+          expect(fake.completeExecution).not.toHaveBeenCalled();
+        }),
+    );
+  });
+
+  it("keeps an opener-only capture while the first commit's acknowledgement is in flight", async () => {
+    // Stop after the first OE commit but before its acknowledgement reaches the
+    // runner: no marker is held, so the report is opener-only and OE accepts it
+    // for the same attempt/fence.
+    const fake = clients();
+    let finalizeStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      finalizeStarted = resolve;
+    });
+    let releaseAck!: () => void;
+    const ackPending = new Promise<void>((resolve) => {
+      releaseAck = resolve;
+    });
+    const saver = new PlatformCheckpointer({
+      native: null,
+      clientFactory: () => ({
+        ...fake.factory(),
+        finalizeStepWithAcknowledgement: async (command) => {
+          finalizeStarted();
+          await ackPending;
+          return {
+            entries: await fake.finalizeStep(command),
+            sourceStateHash: "authoritative-hash",
+          };
+        },
+      }),
+    });
+    const opener = new HumanMessage({ content: "hello", id: "opener" });
+    await runWithExecutionContext(
+      { executionId: "execution", wrapper: null, oeUrl: "http://oe" },
+      () =>
+        runWithAttemptContext(attempt(), async () => {
+          const history = currentCancelledHistory();
+          if (history === null) throw new Error("missing history scope");
+          const inputState = channelValuesToStateSnapshot({
+            messages: [opener],
+          });
+          const inputOpener = inputState.messages[0];
+          if (inputOpener === undefined) throw new Error("missing opener");
+          history.setInput(inputOpener);
+          const config = { configurable: { thread_id: "session" } };
+          const put = saver.put(
+            config,
+            checkpoint("accepted", { messages: [opener], value: 1 }),
+            loopMetadata,
+            {},
+          );
+          await started; // OE commit sent; the acknowledgement has not landed
+          const capture = history.capture();
+          expect(capture?.openerMessageId).toBe("opener");
+          expect(capture?.messages.map((message) => message.id)).toEqual([
+            "opener",
+          ]);
+          expect(capture?.acceptedStepOrdinal).toBe(0n);
+          expect(capture?.sourceStateHash).toBeUndefined();
+          releaseAck();
+          await put;
+        }),
+    );
+  });
+
   it("preserves the native saver outside an OE attempt", async () => {
     const native = new MemorySaver();
     const saver = new PlatformCheckpointer({

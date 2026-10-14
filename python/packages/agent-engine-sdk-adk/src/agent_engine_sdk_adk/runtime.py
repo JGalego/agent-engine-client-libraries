@@ -24,6 +24,13 @@ from agent_engine_runner_shared.context import (
     get_current_user_id as _runner_get_current_user_id,
 )
 from agent_engine_runner_shared.hooks import register_llm
+from agent_engine_runner_shared.mcp_tools import (
+    MCPConfigError,
+    MCPToolBinding,
+    discover_mcp_tools,
+    make_mcp_tool_pod_callable,
+    mcp_server_network_hosts,
+)
 from agent_engine_runner_shared.memory_appbound import (
     AppBoundCrudClient,
     AppBoundRuntime,
@@ -32,6 +39,7 @@ from agent_engine_runner_shared.secure_wrapper import (
     create_secure_tool_function,  # pyright: ignore[reportUnknownVariableType]
 )
 from agent_engine_runner_shared.utils import get_env_bool
+from agent_engine_sdk_adk.mcp import RemoteMCPTool, mcp_tool_description
 from agent_engine_sdk_adk.runner import DurableADKRunner
 
 if TYPE_CHECKING:
@@ -230,7 +238,10 @@ class App(BaseApp):
         self._builder_fn: Callable[..., Any] | None = None
         self._tool_defs: list[ToolDefinition] = []
         self._raw_tools: dict[str, Callable[..., Any]] = {}
+        self._mcp_tools: dict[str, MCPToolBinding] = {}
         self._memory: Memory | None = None
+        if self._runtime.mode == RuntimeMode.AER:
+            self._register_mcp_tools_from_config()
 
     @property
     def agent_config(self) -> RuntimeAgentConfig:
@@ -274,6 +285,11 @@ class App(BaseApp):
         ``FunctionTool(fn, require_confirmation=True)`` and
         ``LongRunningFunctionTool(fn)``. Do not wrap the raw ``@app.tool``
         function; that has not gone through the secure wrapper yet.
+
+        Tools discovered from ``agent.yaml`` ``mcp.servers`` entries are
+        returned as ready-made ADK tools carrying the server's JSON schema;
+        their calls also route through the secure wrapper, with the MCP
+        identity OE forwards to the Tool Pod.
         """
         if self._runtime.mode != RuntimeMode.AER:
             return [_reject_in_pod_confirmation(fn) for fn in self._raw_tools.values()]
@@ -293,6 +309,21 @@ class App(BaseApp):
                 if isinstance(raw_redact_fields, list)
                 else []
             )
+            binding = self._mcp_tools.get(name)
+            if binding is not None:
+                invoke: Callable[..., Any] = create_secure_tool_function(  # type: ignore[no-untyped-call]
+                    original_tool=fn,
+                    tool_name=name,
+                    allow_direct=allow_direct,
+                    metadata={
+                        "mcp_server": binding.server_name,
+                        "mcp_tool": binding.tool_name,
+                    },
+                    is_local=is_local,
+                    redact_fields=redact_fields,
+                )
+                wrapped.append(RemoteMCPTool(binding=binding, invoke=invoke))
+                continue
             wrapped.append(
                 _wrap_for_tool_pod(
                     fn,
@@ -303,6 +334,62 @@ class App(BaseApp):
                 )
             )
         return wrapped
+
+    def _register_mcp_tools_from_config(self) -> None:
+        """Discover and register the tools of configured remote MCP servers.
+
+        AER-only: Tool Pods skip ``tools/list`` and resolve MCP calls from
+        ``agent.yaml`` at execution time, so discovery runs where the model
+        schema is built.
+        """
+        mcp_config = self.agent_config.mcp
+        if not mcp_config.servers:
+            return
+
+        for binding in discover_mcp_tools(mcp_config):
+            self._register_mcp_tool(binding)
+
+    def _register_mcp_tool(self, binding: MCPToolBinding) -> None:
+        """Register one discovered MCP tool as a remote SDK tool.
+
+        Mirrors the LangGraph adapter's registration so OE and the Tool Pod
+        see the same contract: ``is_local`` false plus the ``mcp_server`` /
+        ``mcp_tool`` identity the Tool Pod resolves against ``agent.yaml``.
+        """
+        name = binding.sdk_tool_name
+        if name in self._raw_tools:
+            raise MCPConfigError(f"mcp tool {name!r} is already registered")
+
+        description = mcp_tool_description(binding)
+        tool_pod_callable = make_mcp_tool_pod_callable(binding)
+        network = mcp_server_network_hosts(binding.server_config)
+        metadata: dict[str, Any] = {
+            "name": name,
+            "description": description,
+            "is_local": False,
+            "network": network,
+            "timeout_seconds": binding.server_config.timeout_seconds,
+            "redact_fields": [],
+            "mcp_server": binding.server_name,
+            "mcp_tool": binding.tool_name,
+        }
+        self._runtime.register_tool(  # type: ignore[attr-defined]
+            name=name, func=tool_pod_callable, metadata=metadata
+        )
+        self._raw_tools[name] = tool_pod_callable
+        self._mcp_tools[name] = binding
+        self._tool_defs.append(
+            ToolDefinition(
+                name=name,
+                description=description,
+                args_schema=binding.input_schema,
+                callable=tool_pod_callable,
+                remote=True,
+                network=network,
+                timeout_seconds=binding.server_config.timeout_seconds,
+                redact_fields=[],
+            )
+        )
 
     def tool(
         self,

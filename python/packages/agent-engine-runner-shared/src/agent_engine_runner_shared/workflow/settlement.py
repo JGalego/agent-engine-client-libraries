@@ -9,6 +9,9 @@ from agent_engine_runner_shared.workflow.attempt import (
     complete_execution_command,
     finalize_current_step_command,
 )
+from agent_engine_runner_shared.workflow.cancelled_history import (
+    current_cancelled_history,
+)
 from agent_engine_runner_shared.workflow.client import AsyncWorkflowClient
 
 
@@ -22,7 +25,17 @@ async def settle_execution(attempt: AttemptContext, state: StateSnapshot) -> Non
     if not oe_url:
         raise SettledExecutionError("durable state requires the OE callback URL")
     async with AsyncWorkflowClient(oe_url) as client:
-        entries = await client.finalize_step(finalize_current_step_command(attempt, state))
+        command = finalize_current_step_command(attempt, state)
+        entries = await client.finalize_step(command)
         if entries:
             raise SettledExecutionError("settled step finalization returned suspension entries")
+        # Retain the terminal root before the completion await: a Stop in that
+        # window would otherwise drop the last acknowledged step from the
+        # cancelled-history capture.
+        history = current_cancelled_history.get()
+        if history is not None and history.matches(attempt):
+            history.normalized_input(state)
+            history.acknowledge(
+                state, command.step_ordinal, getattr(entries, "source_state_hash", None)
+            )
         await client.complete_execution(complete_execution_command(attempt, state))

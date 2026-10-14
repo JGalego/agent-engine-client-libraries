@@ -308,15 +308,17 @@ class OperationalStepAllocator:
     calls cannot collide under a single AER. Not a multi-OE authority.
     """
 
-    __slots__ = ("_lock", "_n")
+    __slots__ = ("_lock", "_n", "_allocations")
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._n = 0
+        self._allocations = 0
 
     def next(self) -> int:
         with self._lock:
             self._n += 1
+            self._allocations += 1
             return self._n
 
     def observe_at_least(self, n: int) -> None:
@@ -329,6 +331,11 @@ class OperationalStepAllocator:
     def current(self) -> int:
         with self._lock:
             return self._n
+
+    def allocation_count(self) -> int:
+        """Count minted request slots independently of replayed step watermarks."""
+        with self._lock:
+            return self._allocations
 
 
 class _DurableToolActivityFailedError(Exception):

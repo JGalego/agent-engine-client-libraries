@@ -10,7 +10,8 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from types import SimpleNamespace
+from typing import Any, Literal, cast
 
 import pytest
 from agent_engine_sdk import (
@@ -27,15 +28,17 @@ from agents import (
     ModelSettings,
     RunConfig,
     RunHooks,
+    Runner,
     SQLiteSession,
     ToolApprovalItem,
     ToolGuardrailFunctionOutput,
     ToolInputGuardrail,
     ToolOutputGuardrail,
+    agent_tool_state,
     function_tool,
     handoff,
 )
-from agents.exceptions import ModelBehaviorError
+from agents.exceptions import ModelBehaviorError, UserError
 from agents.guardrail import GuardrailFunctionOutput, InputGuardrail, OutputGuardrail
 from agents.mcp import MCPServerStdio
 from agents.result import RunResultStreaming
@@ -54,26 +57,36 @@ from agent_engine_runner_shared.generated.workflow.v1.activity_pb2 import (
 from agent_engine_runner_shared.generated.workflow.v1.common_pb2 import (
     WorkflowIdentity,
 )
-from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import AttemptContext
+from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import (
+    AttemptContext,
+    BranchLineage,
+)
 from agent_engine_runner_shared.generated.workflow.v1.state_pb2 import (
     FinalizeStepCommand,
+    MessageRole,
     StateSnapshot,
 )
 from agent_engine_runner_shared.hooks import get_named_llm
+from agent_engine_runner_shared.mcp_tools import MCPConfigError, MCPToolError
 from agent_engine_runner_shared.secure_wrapper import (
     CALL_INTERRUPTED_ARTIFACT_KEY,
     INTERRUPTED_CALL_CONTENT,
+    PolicyDeniedException,
     ToolExecutionError,
 )
 from agent_engine_runner_shared.workflow.activity import semantic_input_from_json
 from agent_engine_runner_shared.workflow.context import (
+    ChildOperationBoundary,
     allocate_activity_ordinal,
     attempt_context_scope,
+    child_operation_boundary_scope,
     current_operation_path,
+    preallocate_child_operation_ordinals,
     tool_activity_key,
 )
 from agent_engine_runner_shared.workflow.protojson import (
     json_to_proto_value,
+    proto_struct_to_json,
     proto_value_to_json,
 )
 from agent_engine_sdk_openai_agents import (
@@ -85,17 +98,20 @@ from agent_engine_sdk_openai_agents import agent as agent_module
 from agent_engine_sdk_openai_agents import approvals as approvals_module
 from agent_engine_sdk_openai_agents import tools as tools_module
 from agent_engine_sdk_openai_agents.llm_adapter import RegisteredModel
+from agent_engine_sdk_openai_agents.review import REVIEW_TOOL_NAME
 from agent_engine_sdk_openai_agents.secure_model import (
     _runner_response,  # pyright: ignore[reportPrivateUsage]
 )
 from agent_engine_sdk_openai_agents.state import (
+    STATE_KEY,
     decode_active_agent,
     decode_state,
     encode_state,
 )
-from agent_engine_sdk_openai_agents.tools import json_text
+from agent_engine_sdk_openai_agents.tools import ModelCall, json_text
 from tests.support import (
     FakeWrapper,
+    ReviewingOE,
     ScriptedNativeModel,
     function_call_item,
     route_to_tool_pod,
@@ -112,18 +128,29 @@ class OE:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.previous_state: StateSnapshot | None = None
+        # The session the attempts run for, and, on a branch's first
+        # execution, where OE says the branch came from.
+        self.session_id = "s-1"
+        self.branch_lineage: BranchLineage | None = None
         self.settled: list[StateSnapshot] = []
+        # The session each settlement was made for.
+        self.settled_sessions: list[str] = []
         self.tool_calls: list[tuple[str, dict[str, Any]]] = []
         # The operation path each tool call ran under, by call id.
         self.tool_paths: dict[str, list[tuple[str, int]]] = {}
         # Call ids OE stops mid-flight, as when a user stops a running call.
         self.stopped_call_ids: set[str] = set()
+        # The execution policy each tool was wrapped with, by tool name.
+        self.tool_policies: dict[str, dict[str, Any]] = {}
         monkeypatch.setattr(agent_module, "current_attempt_context", self.attempt)
         monkeypatch.setattr(agent_module, "settle_execution", self.settle)
         monkeypatch.setattr(tools_module, "create_secure_tool_function", self.secure)
         # Approval waits: OE's suspension frontier, keyed by position, holding
         # each wait's answer once a caller resumes it.
         self.waits: dict[str, tuple[str, dict[str, Any] | None]] = {}
+        # The operation path each wait was recorded under, by wait id.
+        self.wait_paths: dict[str, list[tuple[str, int]]] = {}
+        self.wait_steps: dict[str, int] = {}
         oe = self
 
         class Client:
@@ -149,6 +176,11 @@ class OE:
         activity_id, answer = self.waits.setdefault(
             key, (f"wait-{len(self.waits) + 1}", None)
         )
+        self.wait_steps[activity_id] = position.step_ordinal
+        self.wait_paths[activity_id] = [
+            (segment.name, segment.ordinal)
+            for segment in position.operation_path.segments
+        ]
         outcome = ActivityOutcome(
             activity_id=activity_id,
             workflow_identity=WorkflowIdentity(session_id="s-1", execution_id="exec-1"),
@@ -171,14 +203,41 @@ class OE:
 
     def attempt(self) -> AttemptContext:
         attempt = AttemptContext(
-            workflow_identity=WorkflowIdentity(session_id="s-1", execution_id="exec-1")
+            workflow_identity=WorkflowIdentity(
+                session_id=self.session_id, execution_id="exec-1"
+            )
         )
         if self.previous_state is not None:
             attempt.previous_state.CopyFrom(self.previous_state)
+        if self.branch_lineage is not None:
+            attempt.branch_lineage.CopyFrom(self.branch_lineage)
         return attempt
+
+    def branch(self, source: StateSnapshot) -> None:
+        """What OE does for a branch: a new session whose first execution
+        starts from the source session's committed state."""
+        # The lineage always names s-1 as the source, whatever session the
+        # snapshot says it belongs to: that mismatch is how a test hands the
+        # adapter a source it must refuse.
+        self.session_id = "branch-1"
+        self.previous_state = source
+        self.branch_lineage = BranchLineage(
+            source_workflow_identity=WorkflowIdentity(
+                session_id="s-1", execution_id="exec-1"
+            ),
+            source_step_ordinal=1,
+            source_state_hash="hash-1",
+        )
+
+    def next_turn(self) -> None:
+        """A later execution in the same session: it starts from the session's
+        last committed state, with no lineage."""
+        self.previous_state = self.settled[-1]
+        self.branch_lineage = None
 
     async def settle(self, attempt: AttemptContext, state: StateSnapshot) -> None:
         self.settled.append(state)
+        self.settled_sessions.append(attempt.workflow_identity.session_id)
 
     def secure(
         self, *, original_tool: Any, response_format: str, **_policy: Any
@@ -186,6 +245,7 @@ class OE:
         # The real wrapper's content_and_artifact contract: (content, artifact),
         # where only OE sets the stopped-call marker.
         assert response_format == "content_and_artifact"
+        self.tool_policies[_policy["tool_name"]] = _policy
 
         def call(*, tool_call_id: str, **kwargs: Any) -> Any:
             self.tool_calls.append((tool_call_id, kwargs))
@@ -822,10 +882,6 @@ def native_tool(order_id: str) -> str:
 _HI = AgentInput(payload={"message": "hi"})
 
 
-def _passing_guardrail(*_args: Any) -> GuardrailFunctionOutput:
-    return GuardrailFunctionOutput(output_info=None, tripwire_triggered=False)
-
-
 @pytest.mark.parametrize(
     ("overrides", "match"),
     [
@@ -833,15 +889,13 @@ def _passing_guardrail(*_args: Any) -> GuardrailFunctionOutput:
         ({"tools": [native_tool]}, r"app\.tools"),
         # Every agent a handoff can reach is held to the same rules.
         ({"handoffs": [Agent(name="billing")]}, r"'billing' model must be"),
-        ({"input_guardrails": [InputGuardrail(_passing_guardrail)]}, "guardrails"),
         ({"instructions": lambda *_: "dynamic"}, "dynamic instructions"),
         ({"tool_use_behavior": "stop_on_first_tool"}, "tool_use_behavior"),
         ({"model_settings": ModelSettings(temperature=0)}, r"app\.llm"),
         (
             {"mcp_servers": [MCPServerStdio(params={"command": "true"})]},
-            "MCP servers",
+            r"mcp\.servers in agent\.yaml",
         ),
-        ({"output_guardrails": [OutputGuardrail(_passing_guardrail)]}, "guardrails"),
         ({"hooks": AgentHooks()}, "agent hooks"),
         ({"prompt": {"id": "pmpt_1"}}, "hosted prompts"),
     ],
@@ -872,6 +926,10 @@ async def test_unsupported_agents_fail_the_turn_before_any_model_call(
         (
             ModelSettings(extra_body={"previous_response_id": "resp-0"}),
             r"extra_body sets previous_response_id",
+        ),
+        (
+            ModelSettings(extra_args={"conversation": "conv-0", "prompt": {}}),
+            r"extra_args sets conversation, prompt",
         ),
         # The adapter builds these request fields from the Runner's request.
         (
@@ -1348,6 +1406,17 @@ class _Memory:
             }
         )
 
+    def acknowledge(self, _client: object, context: Any) -> None:
+        self.acknowledged.append(
+            {
+                "activity_id": context.activity_id,
+                "attempt_id": context.attempt_id,
+                "fencing_token": context.fencing_token,
+                "execution_id": context.workflow_identity.execution_id,
+                "settled_before": len(self.oe.settled),
+            }
+        )
+
 
 @pytest.mark.parametrize(
     "answer",
@@ -1530,7 +1599,7 @@ async def test_a_malformed_answer_acknowledges_none_of_the_frontier(
 
 async def test_recording_no_approval_is_refused(oe: OE) -> None:
     with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="no approval"):
-        await approvals_module.record_approvals(oe.attempt(), [], [])
+        await approvals_module.record_approvals(oe.attempt(), [], {}, {})
 
 
 async def test_calls_run_before_an_approval_keep_their_recorded_order(
@@ -1674,25 +1743,30 @@ async def test_a_partly_answered_frontier_fails_before_new_work(oe: OE) -> None:
     assert len(native.calls) == calls_before_resume + 1
 
 
+def _approval(call_id: str) -> ToolApprovalItem:
+    return ToolApprovalItem(
+        agent=Agent(name="support"),
+        raw_item=function_call_item(call_id, '{"order_id":"A1"}', name="refund"),
+        tool_name="refund",
+    )
+
+
+def _own_calls(*call_ids: str) -> dict[str, ModelCall]:
+    """Calls the turn's own agent made, in this order."""
+    return {call_id: ModelCall((), index) for index, call_id in enumerate(call_ids)}
+
+
 async def test_waits_keep_their_identity_whatever_order_the_sdk_reports(
     oe: OE,
 ) -> None:
-    agent = Agent(name="support")
-    items = {
-        call_id: ToolApprovalItem(
-            agent=agent,
-            raw_item=function_call_item(call_id, '{"order_id":"A1"}', name="refund"),
-            tool_name="refund",
-        )
-        for call_id in ("call-1", "call-2")
-    }
     identities: list[dict[str, str]] = []
     for reported in (["call-1", "call-2"], ["call-2", "call-1"]):
         with attempt_context_scope(oe.attempt()):
             waits = await approvals_module.record_approvals(
                 oe.attempt(),
-                [items[call_id] for call_id in reported],
-                ["call-1", "call-2"],
+                [_approval(call_id) for call_id in reported],
+                _own_calls("call-1", "call-2"),
+                {},
             )
         identities.append({wait.call_id: wait.activity_id for wait in waits})
 
@@ -1704,28 +1778,110 @@ async def test_waits_keep_their_identity_whatever_order_the_sdk_reports(
 
 
 @pytest.mark.parametrize(
-    ("reported", "call_order"),
-    [(["call-1", "call-1"], ["call-1"]), (["call-9"], ["call-1"])],
-    ids=["repeated-call", "call-not-in-response"],
+    "reported",
+    [
+        ["call-0", "call-1", "n-1", "n-2", "call-3"],
+        ["call-3", "n-2", "n-1", "call-1", "call-0"],
+        ["n-2", "call-3", "call-0", "n-1", "call-1"],
+    ],
 )
-async def test_approvals_must_name_distinct_calls_of_the_response(
-    oe: OE, reported: list[str], call_order: list[str]
+async def test_nested_waits_keep_their_place_whatever_order_the_sdk_reports(
+    oe: OE, reported: list[str]
 ) -> None:
-    agent = Agent(name="support")
-    items = [
-        ToolApprovalItem(
-            agent=agent,
-            raw_item=function_call_item(call_id, '{"order_id":"A1"}', name="refund"),
-            tool_name="refund",
+    # The support model called refund twice, the specialist (call-2), then
+    # refund again; the specialist's model then made two calls of its own.
+    run = (ChildOperationBoundary(name="ask_refunds", occurrence_key="call-2"),)
+    calls = {
+        **_own_calls("call-0", "call-1", "call-2", "call-3"),
+        "n-1": ModelCall(run, 4),
+        "n-2": ModelCall(run, 5),
+    }
+
+    with attempt_context_scope(oe.attempt()):
+        waits = await approvals_module.record_approvals(
+            oe.attempt(), [_approval(call_id) for call_id in reported], calls, {}
         )
-        for call_id in reported
+
+    # The specialist's waits take the place of the call that started its run,
+    # in the order its model made them.
+    assert [wait.call_id for wait in waits] == [
+        "call-0",
+        "call-1",
+        "n-1",
+        "n-2",
+        "call-3",
+    ]
+    specialist_run = [("agent", 1), ("ask_refunds", 1)]
+    assert [oe.wait_paths[wait.activity_id] for wait in waits] == [
+        [("agent", 1)],
+        [("agent", 1)],
+        specialist_run,
+        specialist_run,
+        [("agent", 1)],
     ]
 
+
+@pytest.mark.parametrize("reported", [["n-z", "n-a"], ["n-a", "n-z"]])
+async def test_sibling_nested_runs_wait_in_the_order_oe_numbers_them(
+    oe: OE, reported: list[str]
+) -> None:
+    # The support agent asked the desk (call-1), whose model asked the refunds
+    # specialist twice: first with call id "z", then "a". The second
+    # specialist's model answered first.
+    desk = ChildOperationBoundary(name="ask_desk", occurrence_key="call-1")
+    first = ChildOperationBoundary(name="ask_refunds", occurrence_key="z")
+    second = ChildOperationBoundary(name="ask_refunds", occurrence_key="a")
+    calls = {
+        **_own_calls("call-1"),
+        "z": ModelCall((desk,), 1),
+        "a": ModelCall((desk,), 2),
+        "n-a": ModelCall((desk, second), 3),
+        "n-z": ModelCall((desk, first), 4),
+    }
+
+    with attempt_context_scope(oe.attempt()):
+        # As the secure model does when the desk's response arrives.
+        with child_operation_boundary_scope(desk):
+            preallocate_child_operation_ordinals([first, second])
+        waits = await approvals_module.record_approvals(
+            oe.attempt(), [_approval(call_id) for call_id in reported], calls, {}
+        )
+
+    # Neither the call ids nor which specialist answered first decide it.
+    assert [wait.call_id for wait in waits] == ["n-z", "n-a"]
+    assert [oe.wait_paths[wait.activity_id] for wait in waits] == [
+        [("agent", 1), ("ask_desk", 1), ("ask_refunds", 1)],
+        [("agent", 1), ("ask_desk", 1), ("ask_refunds", 2)],
+    ]
+
+
+_SPECIALIST_RUN = (ChildOperationBoundary(name="ask_refunds", occurrence_key="call-1"),)
+
+
+@pytest.mark.parametrize(
+    ("reported", "calls", "refusal"),
+    [
+        (["call-1", "call-1"], _own_calls("call-1"), "distinct calls"),
+        (["call-9"], _own_calls("call-1"), "distinct calls"),
+        # The run that made the call was not started by a call of this turn.
+        (
+            ["n-1"],
+            {**_own_calls("call-2"), "n-1": ModelCall(_SPECIALIST_RUN, 1)},
+            "'n-1' belongs to an agent run that no call of this turn started",
+        ),
+    ],
+    ids=["repeated-call", "call-not-in-response", "nested-run-not-in-response"],
+)
+async def test_approvals_must_name_distinct_calls_of_the_response(
+    oe: OE, reported: list[str], calls: dict[str, ModelCall], refusal: str
+) -> None:
     with (
         attempt_context_scope(oe.attempt()),
-        pytest.raises(UnsupportedDurableOpenAIAgentsError, match="distinct calls"),
+        pytest.raises(UnsupportedDurableOpenAIAgentsError, match=refusal),
     ):
-        await approvals_module.record_approvals(oe.attempt(), items, call_order)
+        await approvals_module.record_approvals(
+            oe.attempt(), [_approval(call_id) for call_id in reported], calls, {}
+        )
     # Nothing reached OE: an identity it cannot replay is never recorded.
     assert oe.waits == {}
 
@@ -2092,10 +2248,8 @@ def _shipping_model(
     return ScriptedNativeModel(respond=respond)
 
 
-def _ask(call_id: str, order_id: str) -> Any:
-    return function_call_item(
-        call_id, json.dumps({"input": order_id}), name="ask_shipping"
-    )
+def _ask(call_id: str, order_id: str, tool: str = "ask_shipping") -> Any:
+    return function_call_item(call_id, json.dumps({"input": order_id}), name=tool)
 
 
 def _specialist_app(
@@ -2327,46 +2481,468 @@ async def test_agent_tools_replay_cannot_reproduce_fail_before_any_model_call(
     assert support.calls == [] and oe.settled == [] and oe.tool_calls == []
 
 
-@pytest.mark.parametrize("behind_a_handoff", [False, True])
-async def test_approval_inside_an_agent_tool_fails_before_any_work_for_now(
-    oe: OE, behind_a_handoff: bool
-) -> None:
+def _refunds_model(
+    before_first_call: Callable[[str], None] | None = None,
+    call_id: Callable[[str], str] = lambda order_id: f"refund-{order_id}",
+) -> ScriptedNativeModel:
+    """A specialist that asks to refund the order named in its request, then
+    reports what the refund tool, or the person who rejected it, said."""
+
+    def respond(items: Any) -> list[Any]:
+        order_id = str(next(i["content"] for i in items if i.get("role") == "user"))
+        said = [
+            item["output"]
+            for item in items
+            if item.get("type") == "function_call_output"
+            and item["call_id"] == call_id(order_id)
+        ]
+        if said:
+            return [text_item(str(said[0]))]
+        if before_first_call is not None:
+            before_first_call(order_id)
+        return [
+            function_call_item(
+                call_id(order_id), json.dumps({"order_id": order_id}), name="refund"
+            )
+        ]
+
+    return ScriptedNativeModel(respond=respond)
+
+
+def _refunds_app(
+    support: ScriptedNativeModel,
+    refunds: list[str],
+    *,
+    specialist: ScriptedNativeModel | None = None,
+    behind_a_handoff: bool = False,
+    support_refunds_too: bool = False,
+    ask_needs_approval: bool = False,
+) -> App:
+    """A support agent that asks a refunds specialist agent, as a tool. A
+    person approves every refund."""
     app = App(app_name="support")
 
     @app.tool()
     def refund(order_id: str) -> str:
         """Refund an order; a person approves every refund."""
+        refunds.append(order_id)
         return f"refunded {order_id}"
-
-    support = ScriptedNativeModel([text_item("unused")])
 
     @app.entrypoint
     def build() -> Agent[Any]:
-        approver = Agent(
-            name="approver",
-            model=app.llm(ScriptedNativeModel(), llm_id="approver"),
-            tools=_tools_needing_approval(app, "refund"),
-        )
-        # The approval is refused wherever the nested run could reach it.
-        refunds_agent = (
-            Agent(
+        model = app.llm(specialist or _refunds_model(), llm_id="refunds")
+        if behind_a_handoff:
+            # The agent the tool runs hands the request to the one that
+            # refunds; both belong to the same nested run.
+            approver = Agent(
+                name="approver",
+                model=model,
+                tools=_tools_needing_approval(app, "refund"),
+            )
+            to_approver = [
+                function_call_item("handoff-1", "{}", name="transfer_to_approver")
+            ]
+            nested = Agent(
                 name="refunds",
-                model=app.llm(ScriptedNativeModel(), llm_id="refunds"),
+                model=app.llm(
+                    ScriptedNativeModel(respond=lambda _items: to_approver),
+                    llm_id="refunds-intake",
+                ),
                 handoffs=[approver],
             )
-            if behind_a_handoff
-            else approver
+        else:
+            nested = Agent(
+                name="refunds",
+                model=model,
+                tools=_tools_needing_approval(app, "refund"),
+            )
+        ask = nested.as_tool(
+            tool_name="ask_refunds",
+            tool_description="Ask the specialist.",
+            needs_approval=ask_needs_approval,
         )
-        ask = refunds_agent.as_tool(tool_name="ask_refunds", tool_description="Ask.")
-        return Agent(name="support", model=app.llm(support), tools=[ask])
+        own = _tools_needing_approval(app, "refund") if support_refunds_too else []
+        return Agent(name="support", model=app.llm(support), tools=[ask, *own])
 
+    return app
+
+
+_NESTED_REFUND = [("agent", 1), ("ask_refunds", 1)]
+
+
+def _resume(answers: dict[str, dict[str, Any]], oe: OE) -> RequestContext:
+    for wait_id, answer in answers.items():
+        oe.answer(wait_id, answer)
+    return RequestContext(session_id="s-1", resume=True, resume_data=answers)
+
+
+@pytest.mark.parametrize("behind_a_handoff", [False, True])
+async def test_approval_inside_an_agent_tool_waits_at_the_nested_path(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, behind_a_handoff: bool
+) -> None:
+    route_to_tool_pod(monkeypatch, preallocate_tools=True)
+    refunds: list[str] = []
+    asking = [_ask("call-1", "A1", "ask_refunds")]
+    # A replacement attempt replays the support model's call.
+    support = ScriptedNativeModel(asking, list(asking), [text_item("Refunded.")])
+    app = _refunds_app(support, refunds, behind_a_handoff=behind_a_handoff)
+
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    # The specialist's run has not ended: it is waiting.
+    assert [e.event for e in first] == ["subagent_start", "suspend"]
+    (interrupt,) = first[-1].data["interrupts"]
+    assert interrupt["value"]["tool_call"] == {
+        "name": "refund",
+        "args": {"order_id": "A1"},
+        "call_id": "refund-A1",
+    }
+    # The wait belongs to the specialist's run, beside its other activities.
+    assert oe.wait_paths == {interrupt["id"]: _NESTED_REFUND}
+    assert refunds == [] and oe.tool_calls == [] and oe.settled == []
+
+    approved = _resume({interrupt["id"]: {"confirmed": True}}, oe)
+    resumed = await _attempt(app, oe, approved)
+
+    assert resumed[-1].data["response"] == "Refunded."
+    assert refunds == ["A1"] and oe.tool_paths == {"refund-A1": _NESTED_REFUND}
+    # The resumed stream reopens the specialist's run for what follows the
+    # answered wait, then shows the support agent's reply.
+    assert [
+        (e.event, e.data.get("source"), e.data.get("tool_call_id"))
+        for e in resumed[:-1]
+    ] == [
+        ("subagent_start", "ask_refunds", "call-1"),
+        ("token", "ask_refunds", "call-1"),
+        ("subagent_end", "ask_refunds", "call-1"),
+        ("token", "", ""),
+    ]
+    assert resumed[2].data["summary"] == "refunded A1"
+    answer = support.calls[-1]["input"][-1]
+    assert (answer["call_id"], answer["output"]) == ("call-1", "refunded A1")
+    # Only the support conversation is committed.
+    oe.previous_state = oe.settled[0]
+    committed = [item.raw for item in decode_state(oe.attempt(), app_name="support")]
+    assert [item.get("call_id") for item in committed[1:3]] == ["call-1", "call-1"]
+    assert len(committed) == 4
+
+
+async def test_another_executions_stopped_nested_run_is_not_continued(
+    oe: OE,
+) -> None:
+    refunds: list[str] = []
+    support = ScriptedNativeModel([_ask("call-1", "A1", "ask_refunds")])
+    specialist = _refunds_model()
+    app = _refunds_app(support, refunds, specialist=specialist)
+    # Another execution in this process made the same call and its specialist
+    # is stopped for an approval.
+    call = LLMToolCall(id="call-1", name="ask_refunds", args={"input": "A1"})
+    (theirs,) = _runner_response(
+        LLMResponse(content="", tool_calls=[call]), execution_id="exec-2", step=1
+    ).output
+    assert isinstance(theirs, ResponseFunctionToolCall)
+    stopped = SimpleNamespace(interruptions=[object()])
+    agent_tool_state.record_agent_tool_run_result(theirs, cast(Any, stopped))
+    try:
+        events = await _attempt(app, oe, RequestContext(session_id="s-1"))
+    finally:
+        agent_tool_state.drop_agent_tool_run_result(theirs)
+
+    # This execution ran its own specialist and waits on its own approval.
+    assert events[-1].event == "suspend" and len(specialist.calls) == 1
+
+
+async def test_turn_cancelled_while_draining_still_drops_its_stopped_nested_runs(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asking = [_ask("call-1", "A1", "ask_refunds")]
+    support = ScriptedNativeModel(asking, list(asking))
+    specialist = _refunds_model()
+    app = _refunds_app(support, [], specialist=specialist)
+    drain = tools_module.TurnContext.drain
+
+    async def cancelled_drain(self: tools_module.TurnContext) -> None:
+        await drain(self)
+        raise asyncio.CancelledError
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tools_module.TurnContext, "drain", cancelled_drain)
+        with pytest.raises(asyncio.CancelledError):
+            await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    again = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    # The next attempt replays the specialist instead of continuing the run
+    # the cancelled one left stopped.
+    assert again[-1].event == "suspend" and len(specialist.calls) == 2
+
+
+async def test_rejected_approval_inside_an_agent_tool_reaches_the_nested_agent(
+    oe: OE,
+) -> None:
+    refunds: list[str] = []
+    asking = [_ask("call-1", "A1", "ask_refunds")]
+    support = ScriptedNativeModel(asking, list(asking), [text_item("No refund.")])
+    specialist = _refunds_model()
+    app = _refunds_app(support, refunds, specialist=specialist)
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+    wait_id = first[-1].data["interrupts"][0]["id"]
+
+    rejection = {"confirmed": False, "rejection_message": "Not without a receipt."}
+    resumed = await _attempt(app, oe, _resume({wait_id: rejection}, oe))
+
+    assert resumed[-1].data["response"] == "No refund."
+    assert refunds == [] and oe.tool_calls == []
+    # The specialist's model reads the rejection as its call's output, and the
+    # support model reads the specialist's answer.
+    # The resumed attempt replayed the specialist's first model call instead of
+    # continuing the stopped run the first attempt left behind in this process.
+    assert len(specialist.calls) == 3
+    told = specialist.calls[-1]["input"][-1]
+    assert (told["call_id"], told["output"]) == ("refund-A1", "Not without a receipt.")
+    assert support.calls[-1]["input"][-1]["output"] == "Not without a receipt."
+
+
+async def test_root_and_nested_approvals_resolve_in_one_resume(oe: OE) -> None:
+    refunds: list[str] = []
+    batch = [
+        _ask("call-1", "A1", "ask_refunds"),
+        function_call_item("call-2", '{"order_id":"A2"}', name="refund"),
+    ]
+    support = ScriptedNativeModel(batch, list(batch), [text_item("A1 only.")])
+    app = _refunds_app(support, refunds, support_refunds_too=True)
+
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    # One frontier, in the support model's call order: the specialist's wait
+    # sorts with the call that started its run.
+    interrupts = first[-1].data["interrupts"]
+    assert [i["value"]["tool_call"]["call_id"] for i in interrupts] == [
+        "refund-A1",
+        "call-2",
+    ]
+    nested, own = (i["id"] for i in interrupts)
+    assert oe.wait_paths == {nested: _NESTED_REFUND, own: [("agent", 1)]}
+    assert refunds == []
+
+    answers = {
+        nested: {"confirmed": True},
+        own: {"confirmed": False, "rejection_message": "A2 needs a manager."},
+    }
+    resumed = await _attempt(app, oe, _resume(answers, oe))
+
+    assert resumed[-1].data["response"] == "A1 only." and refunds == ["A1"]
+    outputs = {
+        item["call_id"]: str(item["output"])
+        for item in support.calls[-1]["input"]
+        if item.get("type") == "function_call_output"
+    }
+    assert outputs["call-1"] == "refunded A1"
+    assert "A2 needs a manager." in outputs["call-2"]
+
+
+async def test_two_approvals_inside_one_nested_run_share_its_path(oe: OE) -> None:
+    refunds: list[str] = []
+
+    def both(items: Any) -> list[Any]:
+        said = [i["output"] for i in items if i.get("type") == "function_call_output"]
+        if said:
+            return [text_item("; ".join(str(output) for output in said))]
+        return [
+            function_call_item("n-1", '{"order_id":"A1"}', name="refund"),
+            function_call_item("n-2", '{"order_id":"A2"}', name="refund"),
+        ]
+
+    asking = [_ask("call-1", "A1 and A2", "ask_refunds")]
+    support = ScriptedNativeModel(asking, list(asking), [text_item("A1 only.")])
+    specialist = ScriptedNativeModel(respond=both)
+    app = _refunds_app(support, refunds, specialist=specialist)
+
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    interrupts = first[-1].data["interrupts"]
+    assert [i["value"]["tool_call"]["call_id"] for i in interrupts] == ["n-1", "n-2"]
+    wait_1, wait_2 = (i["id"] for i in interrupts)
+    assert oe.wait_paths == {wait_1: _NESTED_REFUND, wait_2: _NESTED_REFUND}
+
+    answers = {
+        wait_1: {"confirmed": True},
+        wait_2: {"confirmed": False, "rejection_message": "A2 needs a manager."},
+    }
+    resumed = await _attempt(app, oe, _resume(answers, oe))
+
+    assert resumed[-1].data["response"] == "A1 only." and refunds == ["A1"]
+    answer = support.calls[-1]["input"][-1]["output"]
+    assert answer == "refunded A1; A2 needs a manager."
+
+
+async def test_concurrent_nested_approvals_wait_under_their_own_occurrences(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route_to_tool_pod(monkeypatch, preallocate_tools=True)
+    refunds: list[str] = []
+    a2_asked = threading.Event()
+
+    def a2_first(order_id: str) -> None:
+        # A1's specialist reaches its model only after A2's has.
+        if order_id == "A1":
+            assert a2_asked.wait(timeout=5), "the nested runs were not concurrent"
+        a2_asked.set()
+
+    batch = [_ask("call-1", "A1", "ask_refunds"), _ask("call-2", "A2", "ask_refunds")]
+    support = ScriptedNativeModel(batch, list(batch), [text_item("Both refunded.")])
+    app = _refunds_app(support, refunds, specialist=_refunds_model(a2_first))
+
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    # Each wait is under its own run, in the support model's call order,
+    # whichever specialist asked first.
+    interrupts = first[-1].data["interrupts"]
+    assert [i["value"]["tool_call"]["call_id"] for i in interrupts] == [
+        "refund-A1",
+        "refund-A2",
+    ]
+    wait_1, wait_2 = (i["id"] for i in interrupts)
+    assert oe.wait_paths == {
+        wait_1: [("agent", 1), ("ask_refunds", 1)],
+        wait_2: [("agent", 1), ("ask_refunds", 2)],
+    }
+
+    a2_asked.clear()
+    answers = {wait_1: {"confirmed": True}, wait_2: {"confirmed": True}}
+    resumed = await _attempt(app, oe, _resume(answers, oe))
+
+    assert resumed[-1].data["response"] == "Both refunded."
+    assert sorted(refunds) == ["A1", "A2"]
+    assert oe.tool_paths == {
+        "refund-A1": [("agent", 1), ("ask_refunds", 1)],
+        "refund-A2": [("agent", 1), ("ask_refunds", 2)],
+    }
+
+
+@pytest.mark.parametrize("refund_fails", [False, True])
+async def test_approval_two_agent_tools_deep_waits_at_the_innermost_path(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, refund_fails: bool
+) -> None:
+    route_to_tool_pod(monkeypatch, preallocate_tools=True)
+    refunds: list[str] = []
+    app = App(app_name="support")
+
+    @app.tool()
+    def refund(order_id: str) -> str:
+        """Refund an order; a person approves every refund."""
+        refunds.append(order_id)
+        if refund_fails:
+            raise RuntimeError("payments are down")
+        return f"refunded {order_id}"
+
+    def desk(items: Any) -> list[Any]:
+        # The desk passes the request on to the refunds specialist.
+        last = items[-1]
+        if last.get("type") == "function_call_output":
+            return [text_item(str(last["output"]))]
+        return [_ask("desk-1", str(last["content"]), "ask_refunds")]
+
+    asking = [_ask("call-1", "A1", "ask_desk")]
+    support = ScriptedNativeModel(asking, list(asking), [text_item("Refunded.")])
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        specialist = Agent(
+            name="refunds",
+            model=app.llm(_refunds_model(), llm_id="refunds"),
+            tools=_tools_needing_approval(app, "refund"),
+        )
+        ask_refunds = specialist.as_tool(
+            tool_name="ask_refunds", tool_description="Ask the specialist."
+        )
+        front_desk = Agent(
+            name="desk",
+            model=app.llm(ScriptedNativeModel(respond=desk), llm_id="desk"),
+            tools=[ask_refunds],
+        )
+        ask_desk = front_desk.as_tool(
+            tool_name="ask_desk", tool_description="Ask the desk."
+        )
+        return Agent(name="support", model=app.llm(support), tools=[ask_desk])
+
+    held = agent_tool_state._agent_tool_run_results_by_obj  # pyright: ignore[reportPrivateUsage]
+    held_before = set(held)
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    (interrupt,) = first[-1].data["interrupts"]
+    innermost = [("agent", 1), ("ask_desk", 1), ("ask_refunds", 1)]
+    assert oe.wait_paths == {interrupt["id"]: innermost} and refunds == []
+
+    approved = _resume({interrupt["id"]: {"confirmed": True}}, oe)
+    if refund_fails:
+        with pytest.raises(ToolExecutionError, match="payments are down"):
+            await _attempt(app, oe, approved)
+    else:
+        resumed = await _attempt(app, oe, approved)
+        assert resumed[-1].data["response"] == "Refunded."
+    assert refunds == ["A1"] and oe.tool_paths == {"refund-A1": innermost}
+    # Resuming makes the SDK copy the stopped runs under scopes of its own;
+    # a long-lived runner must not keep them once the turn is over, however
+    # it ended.
+    assert set(held) == held_before
+
+
+async def test_a_call_id_shared_by_two_nested_runs_fails_the_turn(oe: OE) -> None:
+    refunds: list[str] = []
+    batch = [_ask("call-1", "A1", "ask_refunds"), _ask("call-2", "A2", "ask_refunds")]
+    support = ScriptedNativeModel(batch)
+    # Both specialists' models name their call the same.
+    specialist = _refunds_model(call_id=lambda _order_id: "refund-1")
+    app = _refunds_app(support, refunds, specialist=specialist)
+
+    # An approval names its call by id alone, so the turn could not tell which
+    # run a wait belongs to.
     with pytest.raises(
-        UnsupportedDurableOpenAIAgentsError,
-        match="'refund' needs approval inside the agent tool",
+        UnsupportedDurableOpenAIAgentsError, match="used by two agent runs"
     ):
         await _attempt(app, oe, RequestContext(session_id="s-1"))
-    # Refused from the agent graph: no model, tool, or wait.
-    assert support.calls == [] and oe.tool_calls == [] and oe.waits == {}
+    assert refunds == [] and oe.waits == {} and oe.settled == []
+
+
+async def test_a_call_id_shared_with_a_nested_run_fails_without_any_approval(
+    oe: OE,
+) -> None:
+    # The support model's call to the specialist has the id the specialist's
+    # model gives its own call. Neither call needs approval.
+    support = ScriptedNativeModel([_ask("track-A1", "A1")])
+    app = _specialist_app(support, _shipping_model())
+
+    with pytest.raises(
+        UnsupportedDurableOpenAIAgentsError, match="used by two agent runs"
+    ):
+        await _attempt(app, oe, RequestContext(session_id="s-1"))
+    assert oe.tool_calls == [] and oe.settled == []
+
+
+async def test_an_agent_tool_that_needs_approval_waits_before_its_run(oe: OE) -> None:
+    refunds: list[str] = []
+    asking = [_ask("call-1", "A1", "ask_refunds")]
+    support = ScriptedNativeModel(asking, list(asking), [text_item("Refunded.")])
+    specialist = _refunds_model()
+    app = _refunds_app(support, refunds, specialist=specialist, ask_needs_approval=True)
+
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    # The call to the specialist is the support agent's own call.
+    assert [e.event for e in first] == ["suspend"]
+    (interrupt,) = first[-1].data["interrupts"]
+    assert interrupt["value"]["tool_call"]["name"] == "ask_refunds"
+    assert oe.wait_paths == {interrupt["id"]: [("agent", 1)]}
+    assert specialist.calls == []
+
+    # Approved, the specialist runs and asks for its own approval.
+    approved = _resume({interrupt["id"]: {"confirmed": True}}, oe)
+    second = await _attempt(app, oe, approved)
+
+    assert [e.event for e in second] == ["subagent_start", "suspend"]
+    (nested,) = second[-1].data["interrupts"]
+    assert oe.wait_paths[nested["id"]] == _NESTED_REFUND and refunds == []
 
 
 async def test_replayed_nested_progress_is_not_shown_again_on_resume(oe: OE) -> None:
@@ -2469,3 +3045,1249 @@ async def test_failed_turn_waits_for_a_nested_agents_model_request(oe: OE) -> No
 
     # No model request outlives the failed attempt.
     assert released == ["specialist model request"] and oe.settled == []
+
+
+def _envelope(snapshot: StateSnapshot) -> dict[str, Any]:
+    properties = proto_struct_to_json(snapshot.properties)
+    return cast(dict[str, Any], properties[STATE_KEY])
+
+
+async def test_branch_continues_from_its_source_and_commits_as_its_own(
+    oe: OE,
+) -> None:
+    support = ScriptedNativeModel([_transfer()])
+    billing = ScriptedNativeModel(
+        [text_item("Invoice INV-1 is paid.")],
+        [text_item("By card.")],
+        [text_item("On 1 May.")],
+    )
+    app = _team_app(support, billing, [])
+    await _attempt(app, oe, RequestContext(session_id="s-1"), "Is INV-1 paid?")
+    source = oe.settled[0]
+
+    oe.branch(source)
+    events = await _attempt(app, oe, RequestContext(session_id="branch-1"), "How?")
+
+    assert events[-1].data["response"] == "By card."
+    # The branch starts where the source stopped: with the agent that ended
+    # the source's turn, and the source's conversation ahead of the new message.
+    assert len(support.calls) == 1
+    asked = billing.calls[1]["input"]
+    assert asked[0] == {"role": "user", "content": "Is INV-1 paid?"}
+    assert asked[-1] == {"role": "user", "content": "How?"}
+    assert len(asked) == len(_envelope(source)["items"]) + 1
+    # It settles for its own session and stamps that session on its state;
+    # nothing is settled for the source.
+    assert oe.settled_sessions == ["s-1", "branch-1"]
+    committed = _envelope(oe.settled[1])
+    assert (committed["session_id"], committed["active_agent"]) == (
+        "branch-1",
+        "billing",
+    )
+    assert len(committed["items"]) == len(_envelope(source)["items"]) + 2
+
+    # The branch's next turn is an ordinary turn of the branch session.
+    oe.next_turn()
+    events = await _attempt(app, oe, RequestContext(session_id="branch-1"), "When?")
+
+    assert events[-1].data["response"] == "On 1 May."
+    assert _envelope(oe.settled[2])["session_id"] == "branch-1"
+    assert oe.settled_sessions == ["s-1", "branch-1", "branch-1"]
+
+
+async def test_approval_inside_a_branchs_first_turn_resumes_there(oe: OE) -> None:
+    refunds: list[str] = []
+    source_turn = ScriptedNativeModel([text_item("A1 shipped.")])
+    await _attempt(
+        _refund_app(source_turn, refunds), oe, RequestContext(session_id="s-1"), "A1?"
+    )
+    source = oe.settled[0]
+    native = _refund_turns()
+    app = _refund_app(native, refunds)
+
+    oe.branch(source)
+    first = await _attempt(app, oe, RequestContext(session_id="branch-1"), "Refund A1.")
+
+    (interrupt,) = first[-1].data["interrupts"]
+    # The wait belongs to the branch's first step, the one after the cutoff.
+    assert oe.wait_steps == {interrupt["id"]: 2} and refunds == []
+
+    # OE gives the resumed attempt the same source state and lineage.
+    approved = {interrupt["id"]: {"confirmed": True}}
+    oe.answer(interrupt["id"], approved[interrupt["id"]])
+    resumed = await _attempt(
+        app,
+        oe,
+        RequestContext(session_id="branch-1", resume=True, resume_data=approved),
+    )
+
+    assert resumed[-1].data["response"] == "Done." and refunds == ["A1"]
+    committed = _envelope(oe.settled[1])
+    assert committed["session_id"] == "branch-1"
+    # The source's turn, then the branch's: question, note, call, output, answer.
+    assert len(committed["items"]) == len(_envelope(source)["items"]) + 5
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        ({"app_name": "another-app"}, "different app or session"),
+        ({"session_id": "another-source"}, "different app or session"),
+        ({"active_agent": "returns"}, "'returns' is not part"),
+    ],
+    ids=["another-app", "another-source-session", "agent-the-app-no-longer-has"],
+)
+async def test_branch_from_a_source_this_app_cannot_continue_fails_before_work(
+    oe: OE, change: dict[str, str], match: str
+) -> None:
+    support = ScriptedNativeModel([text_item("unused")])
+    app = _team_app(support, ScriptedNativeModel(), [])
+    owner = {"app_name": "support", "session_id": "s-1", "active_agent": "support"}
+    owner.update(change)
+    oe.branch(
+        encode_state(
+            [],
+            app_name=owner["app_name"],
+            session_id=owner["session_id"],
+            active_agent=owner["active_agent"],
+        )
+    )
+
+    with pytest.raises(DurableOpenAIAgentsStateError, match=match):
+        await _attempt(app, oe, RequestContext(session_id="branch-1"), "Hello.")
+    assert support.calls == [] and oe.settled == []
+
+
+def _history(snapshot: StateSnapshot) -> list[tuple[str, list[str], str]]:
+    """What a reader of OE history sees: role, tool calls made, call answered."""
+    return [
+        (
+            MessageRole.Name(message.role).removeprefix("MESSAGE_ROLE_").lower(),
+            [proto_struct_to_json(call)["name"] for call in message.tool_calls],  # type: ignore[misc]
+            message.tool_call_id,
+        )
+        for message in snapshot.messages
+    ]
+
+
+async def test_history_shows_a_handoff_as_a_call_and_names_the_active_agent(
+    oe: OE,
+) -> None:
+    support = ScriptedNativeModel([_transfer()])
+    billing = ScriptedNativeModel([text_item("Invoice INV-1 is paid.")])
+
+    await _attempt(
+        _team_app(support, billing, []), oe, RequestContext(session_id="s-1")
+    )
+
+    assert _history(oe.settled[0]) == [
+        ("user", [], ""),
+        ("assistant", ["transfer_to_billing"], ""),
+        ("tool", [], "call-1"),
+        ("assistant", [], ""),
+    ]
+    assert _envelope(oe.settled[0])["active_agent"] == "billing"
+
+
+async def test_history_shows_an_agent_tool_call_but_not_the_nested_conversation(
+    oe: OE,
+) -> None:
+    support = ScriptedNativeModel([_ask("call-1", "A1")], [text_item("Friday.")])
+
+    await _attempt(
+        _specialist_app(support, _shipping_model()),
+        oe,
+        RequestContext(session_id="s-1"),
+    )
+
+    # The specialist's own request, tool call, and answer are not history; its
+    # answer is the output of the support agent's call.
+    assert _history(oe.settled[0]) == [
+        ("user", [], ""),
+        ("assistant", ["ask_shipping"], ""),
+        ("tool", [], "call-1"),
+        ("assistant", [], ""),
+    ]
+    assert oe.settled[0].messages[2].content.string_value == "A1 arrives Friday"
+
+
+_FIND_SCHEMA = {
+    "type": "object",
+    "properties": {"query": {"type": "string"}},
+    "required": ["query"],
+}
+
+
+def _atlas_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    *,
+    input_schema: dict[str, Any] = _FIND_SCHEMA,
+    call: Callable[[dict[str, Any]], Any] = lambda arguments: {"found": 3},
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Configure one MCP server in agent.yaml and stand in for it.
+
+    Returns the calls that reached the server, as (server, tool, arguments).
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "agent.yaml").write_text(
+        "name: support\n"
+        "mcp:\n"
+        "  servers:\n"
+        "    atlas:\n"
+        "      url: https://mcp.example.com/mcp\n"
+        "      timeout_seconds: 45\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    async def list_tools(server_name: str, _config: Any) -> list[Any]:
+        assert server_name == "atlas"
+        return [
+            SimpleNamespace(
+                name="find", description="Find documents.", inputSchema=input_schema
+            )
+        ]
+
+    async def call_tool(binding: Any, arguments: dict[str, Any]) -> Any:
+        calls.append((binding.server_name, binding.tool_name, arguments))
+        return call(arguments)
+
+    monkeypatch.setattr(
+        "agent_engine_runner_shared.mcp_tools._list_server_tools", list_tools
+    )
+    monkeypatch.setattr(
+        "agent_engine_runner_shared.mcp_tools._call_mcp_tool", call_tool
+    )
+    return calls
+
+
+async def _started(build: Callable[[], App]) -> App:
+    """Build an app as a process does at import, before any event loop runs:
+    MCP discovery is synchronous and refuses to start inside one."""
+    return await asyncio.to_thread(build)
+
+
+def _find(call_id: str, query: str) -> Any:
+    return function_call_item(call_id, json.dumps({"query": query}), name="atlas__find")
+
+
+async def test_configured_mcp_tool_runs_as_a_remote_tool_under_its_call_id(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    server_calls = _atlas_mcp_server(monkeypatch, tmp_path)
+    native = ScriptedNativeModel(
+        [_find("call-1", "late orders")], [text_item("Three.")]
+    )
+    app = await _started(lambda: _order_app(native))
+
+    events = await _turn(app, "How many late orders?", oe)
+
+    # The model is offered the server's tool beside the app's own, and its
+    # call reaches the server with the model's arguments.
+    assert native.calls[0]["tools"] == ["atlas__find", "lookup_order"]
+    assert server_calls == [("atlas", "find", {"query": "late orders"})]
+    assert oe.tool_calls == [("call-1", {"query": "late orders"})]
+    # It runs in the Tool Pod, which finds the server from this metadata.
+    policy = oe.tool_policies["atlas__find"]
+    assert policy["is_local"] is False
+    assert policy["metadata"] == {"mcp_server": "atlas", "mcp_tool": "find"}
+    (result,) = [event.data for event in events if event.event == "result"]
+    assert result["messages"][2]["content"] == '{"found":3}'
+    # The platform sees it as a remote tool limited to the server's host.
+    (definition,) = [
+        tool for tool in app.get_tool_definitions() if tool.name == "atlas__find"
+    ]
+    assert (definition.remote, definition.network, definition.timeout_seconds) == (
+        True,
+        ["mcp.example.com"],
+        45,
+    )
+    assert definition.args_schema == _FIND_SCHEMA
+
+
+async def test_mcp_tool_of_an_agent_used_as_a_tool_runs_under_the_nested_path(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    route_to_tool_pod(monkeypatch, preallocate_tools=True)
+    _atlas_mcp_server(monkeypatch, tmp_path)
+    researcher = ScriptedNativeModel(
+        [_find("find-1", "late orders")], [text_item("Three.")]
+    )
+    support = ScriptedNativeModel(
+        [function_call_item("call-1", '{"input":"late orders"}', name="ask_research")],
+        [text_item("Three are late.")],
+    )
+    app = await _started(lambda: App(app_name="support"))
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        research = Agent(
+            name="research",
+            model=app.llm(researcher, llm_id="research"),
+            tools=app.tools(),
+        )
+        ask = research.as_tool(tool_name="ask_research", tool_description="Ask.")
+        return Agent(name="support", model=app.llm(support), tools=[ask])
+
+    await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    assert oe.tool_paths == {"find-1": [("agent", 1), ("ask_research", 1)]}
+
+
+async def test_failed_mcp_tool_fails_the_turn_without_committing(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    def unavailable(_arguments: dict[str, Any]) -> Any:
+        raise MCPToolError("MCP tool returned error: cluster paused")
+
+    _atlas_mcp_server(monkeypatch, tmp_path, call=unavailable)
+    native = ScriptedNativeModel([_find("call-1", "x")], [text_item("unused")])
+
+    with pytest.raises(ToolExecutionError, match="cluster paused"):
+        await _turn(await _started(lambda: _order_app(native)), "Find x.", oe)
+    assert oe.settled == []
+    assert len(native.calls) == 1  # the model never saw the failure as tool output
+
+
+# 2**53 itself is refused: OE reads a larger integer back as that one, and the
+# largest arrive as floats.
+@pytest.mark.parametrize("account_id", [2**53 + 1, 2**53, -(2**53), 1e21, -1e21])
+async def test_mcp_result_oe_would_round_fails_the_turn_without_committing(
+    account_id: float, oe: OE, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _atlas_mcp_server(
+        monkeypatch,
+        tmp_path,
+        call=lambda _arguments: {"accounts": [{"account_id": account_id}]},
+    )
+    native = ScriptedNativeModel([_find("call-1", "x")], [text_item("unused")])
+
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="as a string"):
+        await _turn(await _started(lambda: _order_app(native)), "Find x.", oe)
+    assert len(native.calls) == 1 and oe.settled == []
+
+
+async def test_mcp_result_with_exact_integers_and_string_ids_is_kept(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    found = {"account_id": 2**53 - 1, "ref": str(2**53 + 1), "share": 0.25}
+    _atlas_mcp_server(monkeypatch, tmp_path, call=lambda _arguments: found)
+    native = ScriptedNativeModel([_find("call-1", "x")], [text_item("Found.")])
+
+    events = await _turn(await _started(lambda: _order_app(native)), "Find x.", oe)
+
+    (result,) = [event.data for event in events if event.event == "result"]
+    assert json.loads(result["messages"][2]["content"]) == found
+
+
+async def test_mcp_tool_arguments_that_are_not_an_object_fail_the_turn(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    server_calls = _atlas_mcp_server(monkeypatch, tmp_path)
+    native = ScriptedNativeModel(
+        [function_call_item("call-1", '["late orders"]', name="atlas__find")],
+        [text_item("unused")],
+    )
+
+    with pytest.raises(UserError, match="invalid arguments"):
+        await _turn(await _started(lambda: _order_app(native)), "Find x.", oe)
+    assert (server_calls, oe.settled) == ([], [])
+
+
+def test_function_tool_named_like_an_mcp_tool_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _atlas_mcp_server(monkeypatch, tmp_path)
+    app = App(app_name="support")
+
+    def atlas__find(query: str) -> str:
+        """Find documents locally."""
+        return query
+
+    with pytest.raises(MCPConfigError, match="configured MCP server"):
+        app.tool()(atlas__find)
+
+
+async def test_approval_set_on_an_mcp_tool_fails_the_turn_before_any_model_call(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _atlas_mcp_server(monkeypatch, tmp_path)
+    native = ScriptedNativeModel([text_item("unused")])
+    app = await _started(lambda: App(app_name="support"))
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        return Agent(
+            name="support",
+            model=app.llm(native),
+            tools=_tools_needing_approval(app, "atlas__find"),
+        )
+
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="needs_approval"):
+        await _turn(app, "Find x.", oe)
+    assert native.calls == []
+
+
+def test_mcp_tool_with_the_reserved_call_id_parameter_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    schema = {"type": "object", "properties": {"tool_call_id": {"type": "string"}}}
+    _atlas_mcp_server(monkeypatch, tmp_path, input_schema=schema)
+
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="tool_call_id"):
+        App(app_name="support").tools()
+
+
+def test_mcp_tools_are_offered_in_one_order_however_the_server_lists_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _atlas_mcp_server(monkeypatch, tmp_path)
+
+    def offered(listed: list[str]) -> list[str]:
+        async def list_tools(_server_name: str, _config: Any) -> list[Any]:
+            return [
+                SimpleNamespace(name=name, description="", inputSchema=_FIND_SCHEMA)
+                for name in listed
+            ]
+
+        monkeypatch.setattr(
+            "agent_engine_runner_shared.mcp_tools._list_server_tools", list_tools
+        )
+        return [tool.name for tool in App(app_name="support").tools()]
+
+    # A replacement attempt lists the server again, and must offer the model
+    # the same tools in the same order for OE to accept the replay.
+    assert offered(["find", "count", "aggregate"]) == offered(
+        ["aggregate", "find", "count"]
+    )
+
+
+def test_mcp_tool_schema_without_a_type_is_offered_as_an_object(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _atlas_mcp_server(monkeypatch, tmp_path, input_schema={})
+
+    (tool,) = App(app_name="support").tools()
+
+    assert tool.params_json_schema == {"type": "object", "properties": {}}
+
+
+def test_tool_pod_builds_the_agent_without_discovering_mcp_tools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _atlas_mcp_server(monkeypatch, tmp_path)
+    monkeypatch.setenv("RUNNER_MODE", "tool")
+
+    def unexpected(_config: Any) -> Any:
+        raise AssertionError("the Tool Pod resolves MCP calls from agent.yaml")
+
+    monkeypatch.setattr(
+        "agent_engine_sdk_openai_agents.app.discover_mcp_tools", unexpected
+    )
+    native = ScriptedNativeModel([text_item("unused")])
+    app = App(app_name="support")
+
+    @app.tool()
+    def lookup_order(order_id: str) -> str:
+        """Look up an order."""
+        return order_id
+
+    @app.entrypoint
+    def build() -> Agent[None]:
+        return Agent(name="support", model=app.llm(native), tools=app.tools())
+
+    app.get_agent()
+
+    # The pod still registers the model; it has only the app's own functions.
+    assert isinstance(get_named_llm("__default__"), RegisteredModel)
+    assert [tool.name for tool in app.tools()] == ["lookup_order"]
+
+
+_HELD = "Paid in full: TRIPWIRE CLM-1"
+
+
+def _claims_app(native: ScriptedNativeModel | None = None) -> App:
+    """An agent whose answer a guardrail policy holds for review."""
+    return _order_app(
+        native or ScriptedNativeModel(respond=lambda _items: [text_item(_HELD)])
+    )
+
+
+async def test_a_response_held_for_review_suspends_without_showing_it(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviews = ReviewingOE(monkeypatch)
+    native = ScriptedNativeModel(respond=lambda _items: [text_item(_HELD)])
+
+    first = await _attempt(
+        _claims_app(native), oe, RequestContext(session_id="s-1"), "Summarize CLM-1."
+    )
+
+    # Nothing of the held response reaches the caller, only the wait.
+    assert [e.event for e in first] == ["suspend"]
+    (interrupt,) = first[-1].data["interrupts"]
+    # OE recognizes the wait as the review's by this value.
+    assert interrupt["value"] == {
+        "guardrail_review": {
+            "review_id": "review-CLM-1",
+            "allowed_decisions": ["approve", "deny"],
+            "reason": "names a restricted claim",
+            "guardrails": [],
+        }
+    }
+    answers = first[-1].data["resume_schema"]["properties"]["resume_map"]
+    assert answers["properties"] == {
+        interrupt["id"]: approvals_module.REVIEW_ANSWER_SCHEMA
+    }
+    assert oe.wait_paths == {interrupt["id"]: [("agent", 1)]}
+    assert oe.settled == [] and reviews.resolved == []
+    # The tool the Runner stops on is never offered to a model.
+    assert native.calls[0]["tools"] == ["lookup_order"]
+
+
+async def test_an_approved_review_releases_the_held_response_once(
+    oe: OE, wrapper: FakeWrapper, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviews = ReviewingOE(monkeypatch)
+    memory = _Memory(oe)
+    monkeypatch.setattr(wrapper, "durable_memory", memory, raising=False)
+    monkeypatch.setattr(wrapper, "workflow", object(), raising=False)
+    monkeypatch.setattr(approvals_module, "get_current_wrapper", lambda: wrapper)
+    native = ScriptedNativeModel(respond=lambda _items: [text_item(_HELD)])
+    app = _claims_app(native)
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+    wait_id = first[-1].data["interrupts"][0]["id"]
+
+    answer = reviews.decide("review-CLM-1", "approve")
+    resumed = await _attempt(app, oe, _resume({wait_id: answer}, oe))
+
+    assert resumed[-1].event == "result" and resumed[-1].data["response"] == _HELD
+    assert _tokens(resumed) == _HELD
+    # OE answered the held call from the review: the model ran for the
+    # original call and its replay, never for the release.
+    assert reviews.resolved == ["review-CLM-1"] and len(native.calls) == 2
+    # A decision is not conversation content, but Memory acknowledges the
+    # wait's activity before the turn settles.
+    assert memory.acknowledged == [
+        {
+            "activity_id": wait_id,
+            "attempt_id": "attempt-2",
+            "fencing_token": 7,
+            "execution_id": "exec-1",
+            "settled_before": 0,
+        }
+    ]
+    # The stop itself is not conversation either: the committed turn is the
+    # question and the released answer.
+    oe.previous_state = oe.settled[0]
+    items = [item.raw for item in decode_state(oe.attempt(), app_name="support")]
+    assert [(item.get("role"), item.get("type")) for item in items] == [
+        ("user", None),
+        ("assistant", "message"),
+    ]
+
+
+async def test_an_approved_response_with_a_tool_call_runs_it_and_continues(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviews = ReviewingOE(monkeypatch)
+
+    def respond(items: Any) -> list[Any]:
+        if items[-1].get("type") == "function_call_output":
+            return [text_item("It shipped.")]
+        return [text_item(_HELD), function_call_item("call-1")]
+
+    native = ScriptedNativeModel(respond=respond)
+    app = _claims_app(native)
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+    wait_id = first[-1].data["interrupts"][0]["id"]
+    # The held response's tool call does not run before the decision.
+    assert oe.tool_calls == []
+
+    answer = reviews.decide("review-CLM-1", "approve")
+    resumed = await _attempt(app, oe, _resume({wait_id: answer}, oe))
+
+    assert resumed[-1].data["response"] == "It shipped."
+    assert oe.tool_calls == [("call-1", {"order_id": "A1"})]
+    # The model ran for the held call, its replay, and the call after the
+    # tool; the release came from OE, once.
+    assert reviews.resolved == ["review-CLM-1"] and len(native.calls) == 3
+    # The request after the release carries the released call and its output,
+    # and nothing of the stop.
+    sent = native.calls[-1]["input"]
+    assert [i.get("role") or i.get("type") for i in sent] == [
+        "user",
+        "assistant",
+        "function_call",
+        "function_call_output",
+    ]
+    assert REVIEW_TOOL_NAME not in json.dumps(sent, default=str)
+    oe.previous_state = oe.settled[0]
+    items = [item.raw for item in decode_state(oe.attempt(), app_name="support")]
+    assert [(item.get("role"), item.get("type")) for item in items] == [
+        ("user", None),
+        ("assistant", "message"),
+        (None, "function_call"),
+        (None, "function_call_output"),
+        ("assistant", "message"),
+    ]
+
+
+async def test_a_denied_review_fails_the_turn_without_committing(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviews = ReviewingOE(monkeypatch)
+    app = _claims_app()
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+    wait_id = first[-1].data["interrupts"][0]["id"]
+
+    answer = reviews.decide("review-CLM-1", "deny")
+    events: list[Any] = []
+    with pytest.raises(PolicyDeniedException, match="denied by a reviewer"):
+        with attempt_context_scope(oe.attempt()):
+            async for event in app.get_agent().stream(
+                _resume({wait_id: answer}, oe), AgentInput(payload={"message": "x"})
+            ):
+                events.append(event)
+
+    assert oe.settled == [] and _tokens(events) == ""
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"guardrail_review": {"review_id": "review-OTHER", "decision": "approve"}},
+        {"guardrail_review": {"review_id": "review-CLM-1", "decision": "maybe"}},
+        {"confirmed": True},
+    ],
+)
+async def test_a_review_answer_that_is_not_its_reviews_fails_before_new_work(
+    oe: OE, monkeypatch: pytest.MonkeyPatch, answer: dict[str, Any]
+) -> None:
+    reviews = ReviewingOE(monkeypatch)
+    app = _claims_app()
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+    wait_id = first[-1].data["interrupts"][0]["id"]
+
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="recorded halt"):
+        await _attempt(app, oe, _resume({wait_id: answer}, oe))
+
+    assert reviews.resolved == [] and oe.settled == []
+
+
+async def test_a_nested_review_and_a_tool_approval_resolve_in_one_resume(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviews = ReviewingOE(monkeypatch)
+    refunds: list[str] = []
+    batch = [
+        _ask("call-1", "CLM-1", "ask_refunds"),
+        function_call_item("call-2", '{"order_id":"A2"}', name="refund"),
+    ]
+    support = ScriptedNativeModel(batch, list(batch), [text_item("Both done.")])
+    specialist = ScriptedNativeModel(respond=lambda _items: [text_item(_HELD)])
+    app = _refunds_app(
+        support, refunds, specialist=specialist, support_refunds_too=True
+    )
+
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    # One frontier in the support model's call order: the specialist's held
+    # response waits beside the support agent's own approval.
+    review, approval = first[-1].data["interrupts"]
+    assert review["value"]["guardrail_review"]["review_id"] == "review-CLM-1"
+    assert approval["value"]["tool_call"]["call_id"] == "call-2"
+    assert oe.wait_paths == {
+        review["id"]: _NESTED_REFUND,
+        approval["id"]: [("agent", 1)],
+    }
+    assert _HELD not in json.dumps([e.data for e in first], default=str)
+
+    answers = {
+        review["id"]: reviews.decide("review-CLM-1", "approve"),
+        approval["id"]: {"confirmed": True},
+    }
+    resumed = await _attempt(app, oe, _resume(answers, oe))
+
+    assert resumed[-1].data["response"] == "Both done." and refunds == ["A2"]
+    outputs = {
+        item["call_id"]: str(item["output"])
+        for item in support.calls[-1]["input"]
+        if item.get("type") == "function_call_output"
+    }
+    # The released response is the specialist's answer to the support agent.
+    assert outputs == {"call-1": _HELD, "call-2": "refunded A2"}
+    assert specialist.calls[0]["tools"] == ["refund"]
+
+
+async def test_a_model_that_calls_the_review_tool_fails_the_turn(oe: OE) -> None:
+    forged = function_call_item("call-1", '{"review_id":"r-1"}', name=REVIEW_TOOL_NAME)
+    app = _claims_app(ScriptedNativeModel([forged]))
+
+    # Only a halt OE recorded may stop the run for a review.
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="reserves"):
+        await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    assert oe.settled == [] and oe.waits == {}
+
+
+async def test_a_tool_with_the_review_tools_name_fails_before_any_model_call(
+    oe: OE,
+) -> None:
+    native = ScriptedNativeModel([text_item("unused")])
+    app = App(app_name="support")
+
+    @app.tool()
+    def agent_engine_guardrail_review(review_id: str) -> str:
+        """Pretend to be the platform's review tool."""
+        return review_id
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        return Agent(name="support", model=app.llm(native), tools=app.tools())
+
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match=REVIEW_TOOL_NAME):
+        await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    assert native.calls == []
+
+
+async def test_a_handoff_with_the_review_tools_name_fails_before_any_model_call(
+    oe: OE,
+) -> None:
+    support = ScriptedNativeModel([text_item("unused")])
+    billing = ScriptedNativeModel([text_item("unused")])
+    app = _team_app(
+        support,
+        billing,
+        [],
+        lambda agent: handoff(agent, tool_name_override=REVIEW_TOOL_NAME),
+    )
+
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match=REVIEW_TOOL_NAME):
+        await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    assert support.calls == [] and billing.calls == []
+
+
+def _verdict(tripped: bool, info: Any = None) -> GuardrailFunctionOutput:
+    return GuardrailFunctionOutput(output_info=info, tripwire_triggered=tripped)
+
+
+def _guarded_app(native: ScriptedNativeModel, **guardrails: Any) -> App:
+    """The refund app, with guardrails on its one agent."""
+    app = App(app_name="support")
+
+    @app.tool(needs_approval=True)
+    def refund(order_id: str) -> str:
+        """Refund an order; a person approves every refund."""
+        return f"refunded {order_id}"
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        return Agent(
+            name="support", model=app.llm(native), tools=app.tools(), **guardrails
+        )
+
+    return app
+
+
+async def test_tripped_input_guardrail_denies_the_turn_before_any_model_call(
+    oe: OE,
+) -> None:
+    native = ScriptedNativeModel([text_item("unused")])
+    seen: list[Any] = []
+
+    def on_topic(_context: Any, _agent: Any, input: Any) -> GuardrailFunctionOutput:
+        seen.append(input)
+        return _verdict(True, info="the customer's words")
+
+    # Declared the SDK's default way, which would start it beside the model.
+    app = _guarded_app(native, input_guardrails=[InputGuardrail(on_topic)])
+
+    with pytest.raises(PolicyDeniedException) as denied:
+        await _attempt(app, oe, RequestContext(session_id="s-1"), "Write my essay.")
+
+    assert denied.value.reason == "the agent's input guardrail 'on_topic' tripped"
+    assert seen == [[{"role": "user", "content": "Write my essay."}]]
+    assert native.calls == [] and oe.settled == []
+
+
+async def test_input_guardrails_finish_in_listed_order_before_the_model_call(
+    oe: OE,
+) -> None:
+    order: list[str] = []
+
+    def respond(_call: Any) -> list[Any]:
+        order.append("model")
+        return [text_item("Hello.")]
+
+    async def slow(*_args: Any) -> GuardrailFunctionOutput:
+        order.append("slow starts")
+        await asyncio.sleep(0.01)
+        order.append("slow ends")
+        return _verdict(False)
+
+    def quick(*_args: Any) -> GuardrailFunctionOutput:
+        order.append("quick")
+        return _verdict(False)
+
+    app = _guarded_app(
+        ScriptedNativeModel(respond=respond),
+        input_guardrails=[
+            InputGuardrail(slow),
+            InputGuardrail(quick, run_in_parallel=False),
+        ],
+    )
+
+    events = await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+
+    assert order == ["slow starts", "slow ends", "quick", "model"]
+    # Input guardrails hold nothing back once they pass.
+    assert _tokens(events) == "Hello." and events[-1].data["response"] == "Hello."
+
+
+async def test_guardrails_after_the_one_that_trips_do_not_run(oe: OE) -> None:
+    ran: list[str] = []
+
+    def first(*_args: Any) -> GuardrailFunctionOutput:
+        ran.append("first")
+        return _verdict(True)
+
+    def second(*_args: Any) -> GuardrailFunctionOutput:
+        ran.append("second")
+        return _verdict(True)
+
+    app = _guarded_app(
+        ScriptedNativeModel([text_item("unused")]),
+        input_guardrails=[InputGuardrail(first), InputGuardrail(second)],
+    )
+
+    with pytest.raises(PolicyDeniedException, match="'first'"):
+        await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+    assert ran == ["first"]
+
+
+async def test_tripped_output_guardrail_denies_the_turn_and_shows_none_of_the_answer(
+    oe: OE,
+) -> None:
+    native = ScriptedNativeModel([text_item("Internal note: margin is 40%.")])
+    checked: list[Any] = []
+
+    def no_internal_notes(
+        _context: Any, _agent: Any, output: Any
+    ) -> GuardrailFunctionOutput:
+        checked.append(output)
+        return _verdict("Internal note" in output)
+
+    app = _guarded_app(
+        native, output_guardrails=[OutputGuardrail(no_internal_notes, name="notes")]
+    )
+    events: list[Any] = []
+
+    with pytest.raises(PolicyDeniedException) as denied:
+        with attempt_context_scope(oe.attempt()):
+            async for event in app.get_agent().stream(
+                RequestContext(session_id="s-1"), _HI
+            ):
+                events.append(event)
+
+    assert denied.value.reason == "the agent's output guardrail 'notes' tripped"
+    assert checked == ["Internal note: margin is 40%."]
+    # The SDK streams an answer before its output guardrails see it.
+    assert events == [] and oe.settled == []
+
+
+async def test_answer_of_an_agent_with_output_guardrails_arrives_whole(oe: OE) -> None:
+    def passes(*_args: Any) -> GuardrailFunctionOutput:
+        return _verdict(False)
+
+    app = _guarded_app(
+        ScriptedNativeModel([text_item("Shipped.")]),
+        output_guardrails=[OutputGuardrail(passes)],
+    )
+
+    events = await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+
+    assert [event.event for event in events] == ["result"]
+    assert events[-1].data["response"] == "Shipped." and len(oe.settled) == 1
+
+
+async def test_guardrails_run_once_in_an_attempt_that_continues_past_an_approval(
+    oe: OE,
+) -> None:
+    ran: list[str] = []
+
+    def on_topic(*_args: Any) -> GuardrailFunctionOutput:
+        ran.append("input")
+        return _verdict(False)
+
+    def polite(_context: Any, _agent: Any, output: Any) -> GuardrailFunctionOutput:
+        ran.append(f"output {output}")
+        return _verdict(False)
+
+    app = _guarded_app(
+        _refund_turns(),
+        input_guardrails=[InputGuardrail(on_topic)],
+        output_guardrails=[OutputGuardrail(polite)],
+    )
+
+    first = await _attempt(app, oe, RequestContext(session_id="s-1"))
+
+    (interrupt,) = first[-1].data["interrupts"]
+    # The model's words beside the refund call are not its final output.
+    assert ran == ["input"]
+    resumed = await _attempt(
+        app, oe, _resume({interrupt["id"]: {"confirmed": True}}, oe)
+    )
+
+    # The replacement attempt replays the turn, input guardrail included; the
+    # Runner's continuation after the approval does not run it a third time.
+    assert ran == ["input", "input", "output Done."]
+    assert resumed[-1].data["response"] == "Done." and len(oe.settled) == 1
+    assert _tokens(first) == _tokens(resumed) == ""
+
+
+async def test_guardrail_asks_a_judge_model_before_the_agents_own_model(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proxies = route_to_tool_pod(monkeypatch)
+    judge_model = ScriptedNativeModel(respond=lambda call: [text_item("off topic")])
+    native = ScriptedNativeModel([text_item("unused")])
+    app = App(app_name="support")
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        judge = Agent(
+            name="judge",
+            instructions="Is this about an order?",
+            model=app.llm(judge_model, llm_id="judge"),
+        )
+
+        async def on_topic(
+            context: Any, _agent: Any, input: Any
+        ) -> GuardrailFunctionOutput:
+            # No run config: the developer's run is the SDK's documented one.
+            verdict = await Runner.run(judge, input, context=context.context)
+            return _verdict(verdict.final_output == "off topic")
+
+        return Agent(
+            name="support",
+            model=app.llm(native),
+            input_guardrails=[InputGuardrail(on_topic)],
+        )
+
+    events: list[Any] = []
+    with pytest.raises(PolicyDeniedException, match="'on_topic'"):
+        with attempt_context_scope(oe.attempt()):
+            async for event in app.get_agent().stream(
+                RequestContext(session_id="s-1"), _HI
+            ):
+                events.append(event)
+
+    # The judge's call is an OE activity of the judge's registered model; the
+    # agent's own model was never asked, and the judge's words reach no one.
+    asked = [
+        (p.kwargs["llm_id"], [c["step"] for c in p.calls]) for p in proxies.instances
+    ]
+    assert asked == [("judge", [1])]
+    assert native.calls == [] and events == [] and oe.settled == []
+
+
+async def test_a_judge_response_held_for_review_fails_the_turn(
+    oe: OE, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reviews = ReviewingOE(monkeypatch)
+    native = ScriptedNativeModel([text_item("unused")])
+    app = App(app_name="support")
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        judge = Agent(
+            name="judge",
+            model=app.llm(
+                ScriptedNativeModel(respond=lambda _items: [text_item(_HELD)]),
+                llm_id="judge",
+            ),
+        )
+
+        async def on_topic(
+            context: Any, _agent: Any, input: Any
+        ) -> GuardrailFunctionOutput:
+            await Runner.run(judge, input, context=context.context)
+            return _verdict(False)
+
+        return Agent(
+            name="support",
+            model=app.llm(native),
+            input_guardrails=[InputGuardrail(on_topic)],
+        )
+
+    events: list[Any] = []
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="a guardrail runs"):
+        with attempt_context_scope(oe.attempt()):
+            async for event in app.get_agent().stream(
+                RequestContext(session_id="s-1"), _HI
+            ):
+                events.append(event)
+
+    # No wait is recorded for a review the judge's run could never stop on.
+    assert events == [] and oe.settled == [] and oe.wait_paths == {}
+    assert native.calls == [] and reviews.resolved == []
+
+
+async def test_handoff_target_runs_its_input_guardrails_when_it_starts_a_turn(
+    oe: OE,
+) -> None:
+    ran: list[str] = []
+
+    def billing_only(*_args: Any) -> GuardrailFunctionOutput:
+        ran.append("billing")
+        return _verdict(False)
+
+    def guarded(billing: Agent[Any]) -> Agent[Any]:
+        billing.input_guardrails = [InputGuardrail(billing_only)]
+        return billing
+
+    app = _team_app(
+        ScriptedNativeModel([_transfer()]),
+        ScriptedNativeModel([text_item("Billing here.")], [text_item("Still here.")]),
+        [],
+        to_billing=guarded,
+    )
+
+    await _turn(app, "I have a billing question.", oe)
+
+    # As in the SDK, only the agent that starts a run checks the run's input.
+    assert ran == []
+    oe.next_turn()
+    await _turn(app, "And another.", oe)
+    assert ran == ["billing"]
+
+
+def _trips(tripped: bool, *_args: Any) -> GuardrailFunctionOutput:
+    return _verdict(tripped)
+
+
+@pytest.mark.parametrize(
+    ("guardrails", "match"),
+    [
+        (
+            {"input_guardrails": [InputGuardrail(functools.partial(_trips, True))]},
+            "an input guardrail of agent 'support' has no name; pass name= to "
+            "InputGuardrail",
+        ),
+        (
+            {"output_guardrails": [OutputGuardrail(functools.partial(_trips, True))]},
+            "an output guardrail of agent 'support' has no name; pass name= to "
+            "OutputGuardrail",
+        ),
+    ],
+    ids=["input", "output"],
+)
+async def test_guardrail_without_a_name_is_refused_before_any_model_call(
+    oe: OE, guardrails: dict[str, Any], match: str
+) -> None:
+    native = ScriptedNativeModel([text_item("unused")])
+    app = _guarded_app(native, **guardrails)
+
+    # Unnamed, its trip could not be reported: the SDK names a guardrail
+    # after its function, and a partial has no name.
+    with pytest.raises(UnsupportedDurableOpenAIAgentsError, match=match):
+        await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+
+    assert native.calls == [] and oe.settled == []
+
+
+async def test_guardrail_built_from_a_partial_trips_under_the_name_it_is_given(
+    oe: OE,
+) -> None:
+    native = ScriptedNativeModel([text_item("unused")])
+    app = _guarded_app(
+        native,
+        input_guardrails=[
+            InputGuardrail(functools.partial(_trips, True), name="on_topic")
+        ],
+    )
+
+    with pytest.raises(PolicyDeniedException) as denied:
+        await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+
+    assert denied.value.reason == "the agent's input guardrail 'on_topic' tripped"
+    assert native.calls == [] and oe.settled == []
+
+
+def _team_with_guarded_billing(billing: ScriptedNativeModel, checked: list[Any]) -> App:
+    """Support hands to billing, whose output guardrail checks its answer."""
+
+    def no_internal_notes(
+        _context: Any, agent: Any, output: Any
+    ) -> GuardrailFunctionOutput:
+        checked.append((agent.name, output))
+        return _verdict("Internal note" in output)
+
+    def to_billing(billing_agent: Agent[Any]) -> Agent[Any]:
+        billing_agent.output_guardrails = [
+            OutputGuardrail(no_internal_notes, name="notes")
+        ]
+        return billing_agent
+
+    return _team_app(ScriptedNativeModel([_transfer()]), billing, [], to_billing)
+
+
+async def test_answer_of_a_guarded_handoff_target_is_checked_and_not_streamed(
+    oe: OE,
+) -> None:
+    checked: list[Any] = []
+    app = _team_with_guarded_billing(
+        ScriptedNativeModel([text_item("Invoice INV-1 is paid.")]), checked
+    )
+
+    events = await _attempt(app, oe, RequestContext(session_id="s-1"), "Is it paid?")
+
+    # The agent that ends the turn checks the answer, and its text reaches
+    # the caller whole in the result, not as tokens.
+    assert checked == [("billing", "Invoice INV-1 is paid.")]
+    assert _tokens(events) == ""
+    assert events[-1].data["response"] == "Invoice INV-1 is paid."
+    assert len(oe.settled) == 1
+
+
+async def test_tripped_output_guardrail_of_a_handoff_target_shows_none_of_its_answer(
+    oe: OE,
+) -> None:
+    checked: list[Any] = []
+    app = _team_with_guarded_billing(
+        ScriptedNativeModel([text_item("Internal note: margin is 40%.")]), checked
+    )
+    events: list[Any] = []
+
+    with pytest.raises(PolicyDeniedException) as denied:
+        with attempt_context_scope(oe.attempt()):
+            async for event in app.get_agent().stream(
+                RequestContext(session_id="s-1"), _HI
+            ):
+                events.append(event)
+
+    assert denied.value.reason == "the agent's output guardrail 'notes' tripped"
+    assert checked == [("billing", "Internal note: margin is 40%.")]
+    assert _tokens(events) == "" and oe.settled == []
+
+
+async def test_unguarded_handoff_target_streams_after_a_guarded_agent_hands_off(
+    oe: OE,
+) -> None:
+    app = App(app_name="support")
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        billing = Agent(
+            name="billing",
+            model=app.llm(
+                ScriptedNativeModel([text_item("Invoice INV-1 is paid.")]),
+                llm_id="billing",
+            ),
+        )
+        return Agent(
+            name="support",
+            model=app.llm(ScriptedNativeModel([_transfer()])),
+            handoffs=[billing],
+            output_guardrails=[OutputGuardrail(lambda *_: _verdict(False), name="x")],
+        )
+
+    events = await _attempt(app, oe, RequestContext(session_id="s-1"), "Is it paid?")
+
+    # Only the agent speaking decides: billing has no output guardrail.
+    assert _tokens(events) == "Invoice INV-1 is paid."
+    assert events[-1].data["response"] == "Invoice INV-1 is paid."
+
+
+@pytest.mark.parametrize(
+    "guardrails",
+    [
+        {"input_guardrails": [InputGuardrail(lambda *_: _verdict(False))]},
+        {"output_guardrails": [OutputGuardrail(lambda *_: _verdict(False))]},
+    ],
+)
+async def test_guardrails_on_an_agent_used_as_a_tool_are_refused(
+    oe: OE, guardrails: dict[str, Any]
+) -> None:
+    support = ScriptedNativeModel([text_item("unused")])
+
+    def guarded(shipping: Agent[Any]) -> Any:
+        for name, value in guardrails.items():
+            setattr(shipping, name, value)
+        return shipping.as_tool(tool_name="ask_shipping", tool_description="Ask.")
+
+    app = _specialist_app(support, _shipping_model(), as_tool=guarded)
+
+    with pytest.raises(
+        UnsupportedDurableOpenAIAgentsError,
+        match="agent 'shipping' is used as a tool and has guardrails",
+    ):
+        await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+    assert support.calls == []
+
+
+@pytest.mark.parametrize("first_trips", [False, True])
+async def test_output_guardrails_run_one_at_a_time_in_listed_order(
+    oe: OE, first_trips: bool
+) -> None:
+    order: list[str] = []
+
+    async def yielding(*_args: Any) -> GuardrailFunctionOutput:
+        order.append("yielding starts")
+        # Lets anything started beside this guardrail run first.
+        await asyncio.sleep(0)
+        order.append("yielding ends")
+        return _verdict(first_trips)
+
+    def quick(*_args: Any) -> GuardrailFunctionOutput:
+        order.append("quick")
+        return _verdict(False)
+
+    app = _guarded_app(
+        ScriptedNativeModel([text_item("Shipped.")]),
+        output_guardrails=[OutputGuardrail(yielding), OutputGuardrail(quick)],
+    )
+
+    if first_trips:
+        with pytest.raises(PolicyDeniedException, match="'yielding'"):
+            await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+        assert order == ["yielding starts", "yielding ends"] and oe.settled == []
+    else:
+        events = await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+        assert order == ["yielding starts", "yielding ends", "quick"]
+        assert events[-1].data["response"] == "Shipped."
+
+
+async def test_guardrails_on_an_agent_handed_to_inside_an_agent_tool_are_refused(
+    oe: OE,
+) -> None:
+    models = [ScriptedNativeModel([text_item("unused")]) for _ in range(3)]
+    support, shipping, returns = models
+    app = App(app_name="support")
+
+    @app.entrypoint
+    def build() -> Agent[Any]:
+        returns_agent = Agent(
+            name="returns",
+            model=app.llm(returns, llm_id="returns"),
+            output_guardrails=[OutputGuardrail(lambda *_: _verdict(False))],
+        )
+        # The agent used as a tool has no guardrail of its own.
+        specialist = Agent(
+            name="shipping",
+            model=app.llm(shipping, llm_id="shipping"),
+            handoffs=[returns_agent],
+        )
+        ask = specialist.as_tool(tool_name="ask_shipping", tool_description="Ask.")
+        return Agent(name="support", model=app.llm(support), tools=[ask])
+
+    with pytest.raises(
+        UnsupportedDurableOpenAIAgentsError,
+        match="agent 'returns' is used as a tool and has guardrails",
+    ):
+        await _attempt(app, oe, RequestContext(session_id="s-1"), "hi")
+    assert [model.calls for model in models] == [[], [], []]

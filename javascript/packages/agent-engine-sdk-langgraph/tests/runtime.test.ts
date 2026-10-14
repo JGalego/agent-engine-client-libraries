@@ -1027,4 +1027,112 @@ describe("App — MCP tool registration", () => {
       mcp_tool: "search_issues",
     });
   });
+
+  it("exposes MCP annotations on app.getTools() in AER mode", async () => {
+    writeAgentYamlWithMcpServer();
+    const annotations = {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+      title: "Search issues",
+    };
+    discoverMcpToolsMock.mockResolvedValue([
+      {
+        serverName: "github",
+        toolName: "search_issues",
+        sdkToolName: "github__search_issues",
+        description: "Search GitHub issues",
+        inputSchema: { type: "object", properties: {} },
+        serverConfig: {
+          transport: "streamable_http",
+          url: "https://mcp.example.com/github",
+          headers: {},
+          auth: RuntimeMCPAuthConfigSchema.parse({}),
+          allowed_tools: null,
+          timeout_seconds: 30,
+        },
+        annotations,
+      },
+    ]);
+
+    const app = new App({ appName: "Test Agent" });
+    await app.ready();
+
+    const tools = app.getTools() as unknown as {
+      name: string;
+      metadata?: { annotations?: Record<string, unknown> };
+    }[];
+    const tool = tools.find((t) => t.name === "github__search_issues");
+    expect(tool?.metadata?.annotations).toEqual(annotations);
+  });
+
+  it("exposes MCP annotations on app.getTools() in non-AER mode", async () => {
+    writeAgentYamlWithMcpServer();
+    const annotations = { readOnlyHint: true, destructiveHint: false };
+    discoverMcpToolsMock.mockResolvedValue([
+      {
+        serverName: "github",
+        toolName: "search_issues",
+        sdkToolName: "github__search_issues",
+        description: "Search GitHub issues",
+        inputSchema: { type: "object", properties: {} },
+        serverConfig: {
+          transport: "streamable_http",
+          url: "https://mcp.example.com/github",
+          headers: {},
+          auth: RuntimeMCPAuthConfigSchema.parse({}),
+          allowed_tools: null,
+          timeout_seconds: 30,
+        },
+        annotations,
+      },
+    ]);
+
+    const prev = process.env["RUNNER_MODE"];
+    process.env["RUNNER_MODE"] = "tool";
+    try {
+      const app = new App({ appName: "Test Agent" });
+      await app.ready();
+      const tools = app.getTools() as unknown as {
+        name: string;
+        metadata?: { annotations?: Record<string, unknown> };
+      }[];
+      const tool = tools.find((t) => t.name === "github__search_issues");
+      expect(tool?.metadata?.annotations).toEqual(annotations);
+    } finally {
+      if (prev === undefined) delete process.env["RUNNER_MODE"];
+      else process.env["RUNNER_MODE"] = prev;
+    }
+  });
+
+  it("leaves metadata.annotations missing when the server omitted hints", async () => {
+    writeAgentYamlWithMcpServer();
+    discoverMcpToolsMock.mockResolvedValue([
+      {
+        serverName: "github",
+        toolName: "search_issues",
+        sdkToolName: "github__search_issues",
+        description: "Search GitHub issues",
+        inputSchema: { type: "object", properties: {} },
+        serverConfig: {
+          transport: "streamable_http",
+          url: "https://mcp.example.com/github",
+          headers: {},
+          auth: RuntimeMCPAuthConfigSchema.parse({}),
+          allowed_tools: null,
+          timeout_seconds: 30,
+        },
+      },
+    ]);
+
+    const app = new App({ appName: "Test Agent" });
+    await app.ready();
+    const tools = app.getTools() as unknown as {
+      name: string;
+      metadata?: { annotations?: Record<string, unknown> };
+    }[];
+    const tool = tools.find((t) => t.name === "github__search_issues");
+    expect(tool?.metadata?.annotations).toBeUndefined();
+  });
 });

@@ -2,7 +2,7 @@
 
 import { create, equals, type JsonObject } from "@bufbuild/protobuf";
 import { isDeepStrictEqual } from "node:util";
-import type { BaseMessage } from "@langchain/core/messages";
+import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import {
   Command,
@@ -30,6 +30,8 @@ import {
   WorkflowClient,
   WorkflowIdentitySchema,
   currentStepOrdinal,
+  currentCancelledHistory,
+  reportCancelledHistoryBeforeCleanup,
   buildActivityCommand,
   finalizeCurrentStepSuspensionsCommand,
   getCurrentOeUrl,
@@ -63,7 +65,11 @@ import {
   streamHitlSuspendEvent,
   type PublicInterrupt,
 } from "./suspend.js";
-import { assignMissingGraphInputMessageIds } from "./messages.js";
+import {
+  assignMissingGraphInputMessageIds,
+  unwrapMessageValues,
+} from "./messages.js";
+import { WorkflowMessageCodec } from "./workflow_message.js";
 import type { PlatformCheckpointer } from "./platform_checkpointer.js";
 import { UnsupportedDurableGraphError } from "./platform_checkpointer.js";
 
@@ -389,6 +395,7 @@ export class DurableSession extends ExecutionSession {
   private readonly attempt: AttemptContext;
   private readonly checkpointer: PlatformCheckpointer;
   private readonly executionId: string;
+  private readonly openerContent: string;
   private readonly resumeActivityIds: ReadonlySet<string>;
   private resumeFrontierSettled = false;
 
@@ -403,6 +410,18 @@ export class DurableSession extends ExecutionSession {
     this.attempt = execution.attempt;
     this.checkpointer = execution.checkpointer;
     this.executionId = execution.executionId;
+    const payload = input.payload;
+    this.openerContent =
+      payload !== null && typeof payload === "object" && !Array.isArray(payload)
+        ? String(payload["message"] ?? "")
+        : "";
+    const opener = WorkflowMessageCodec.fromLangChainMessage(
+      new HumanMessage({
+        content: this.openerContent,
+        id: `durable-input:${this.executionId}`,
+      }),
+    );
+    currentCancelledHistory()?.setInput(opener);
     rejectNodeRetryPolicies(graph);
     this.durableSubgraphs?.validate();
     this.resumed = ctx.resume === true;
@@ -431,6 +450,12 @@ export class DurableSession extends ExecutionSession {
     }
   }
 
+  // Durable identity is stable per attempt: prepareRun fills missing ids with
+  // `durable-input:{executionId}` — a random build-time id would break replay.
+  protected override freshInputMessageId(): undefined {
+    return undefined;
+  }
+
   async prepareRun(): Promise<PreparedRun> {
     setActivityReconstructionIds([...this.resumeActivityIds]);
     // Replacement attempts rebuild the original turn, including tenant hooks.
@@ -447,7 +472,10 @@ export class DurableSession extends ExecutionSession {
       ...this.baseConfig(),
       durability: "sync",
     } as RunnableConfig;
-    const freshInput = this.freshGraphInput(prepareContext);
+    const freshInput = this.freshGraphInput(
+      prepareContext,
+      `durable-input:${this.executionId}`,
+    );
     if (isCommand(freshInput)) {
       throw new UnsupportedDurableGraphError(
         "Command input is not supported on durable_workflow sessions",
@@ -460,6 +488,29 @@ export class DurableSession extends ExecutionSession {
         ? () => `durable-input:${this.executionId}`
         : (index) => `durable-input:${this.executionId}:${index}`,
     );
+    if (
+      graphInput !== null &&
+      typeof graphInput === "object" &&
+      "messages" in graphInput
+    ) {
+      const messages = unwrapMessageValues(
+        graphInput.messages,
+      ) as BaseMessage[];
+      // The current turn's opener is the newest human message: a hook that
+      // carries conversation history appends the current prompt last, so a
+      // historical content match must not override it.
+      const opener = [...messages]
+        .reverse()
+        .find((message) => message.type === "human");
+      if (opener !== undefined) {
+        currentCancelledHistory()?.setInput(
+          WorkflowMessageCodec.fromLangChainMessage(
+            opener,
+            this.attempt.replayMode,
+          ),
+        );
+      }
+    }
     await this.checkpointer.seedPreviousState(this.attempt, config);
     return { graphInput, config };
   }
@@ -702,7 +753,15 @@ export class DurableSession extends ExecutionSession {
   }
 
   async close(): Promise<void> {
-    await this.checkpointer.releaseScratch(this.attempt);
+    try {
+      await reportCancelledHistoryBeforeCleanup();
+    } finally {
+      try {
+        await this.checkpointer.releaseScratch(this.attempt);
+      } finally {
+        currentCancelledHistory()?.close();
+      }
+    }
   }
 
   override runInGraphScope<T>(fn: () => T): T {

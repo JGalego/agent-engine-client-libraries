@@ -1146,6 +1146,31 @@ class TestScaffold:
 
 
 class TestRegenerate:
+    def test_oauth_regeneration_preserves_binding_and_secret_free_bearer_catalog(self, tmp_path):
+        """Public compilation emits OAuth guidance; regeneration preserves its binding."""
+        out = _connector_dir(tmp_path)
+        result = compile_catalog(
+            str(out / "spec.yaml"),
+            name="weather",
+            auth=Auth(type="oauth", provider_type="weather-service", scopes=["read"]),
+            out_dir=out,
+        )
+        authoring = result.tool_yaml
+        assert authoring is not None
+        before = authoring.read_text(encoding="utf-8")
+        document = yaml.safe_load(before)
+        assert document["auth"] == {
+            "type": "oauth",
+            "provider_type": "weather-service",
+            "scopes": ["read"],
+        }
+        assert "delegated OAuth" in before
+        assert "anonymously" not in before
+        regenerated = regenerate_catalog(authoring)
+        assert authoring.read_text(encoding="utf-8") == before
+        catalog = yaml.safe_load(regenerated.catalog.read_text(encoding="utf-8"))
+        assert catalog["externalize"]["auth"] == {"type": "bearer"}
+
     def test_regeneration_preserves_authoring_and_rewrites_catalog(self, tmp_path):
         out = _connector_dir(tmp_path)
         result = compile_catalog(str(out / "spec.yaml"), name="weather", out_dir=out)

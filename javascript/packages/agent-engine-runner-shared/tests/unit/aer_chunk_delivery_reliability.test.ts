@@ -1380,3 +1380,44 @@ describe("AER doHandleExecute owner routing", () => {
     expect(server.ownerCallbackUrl.size).toBe(0);
   });
 });
+
+test("old attempt terminal delivery does not suppress replacement", async () => {
+  vi.useFakeTimers();
+  const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body));
+    return new Response(null, { status: body.attempt_id === "A" ? 503 : 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const delivery = new CallbackDelivery();
+  try {
+    const oldDelivery = delivery.send("http://oe", {
+      execution_id: "same-execution",
+      status: "ERROR",
+      error: "old",
+      attempt_id: "A",
+      attempt_fence: 1,
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    await oldDelivery;
+    await delivery.send("http://oe", {
+      execution_id: "same-execution",
+      status: "COMPLETED",
+      result: "new",
+      attempt_id: "B",
+      attempt_fence: 2,
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        (call) => JSON.parse(String(call[1].body)).attempt_id === "B",
+      ),
+    ).toBe(true);
+    await expect(
+      delivery.waitForTerminal("same-execution", {
+        attempt_id: "B",
+        attempt_fence: 2,
+      }),
+    ).resolves.toBe(true);
+  } finally {
+    await delivery.shutdown();
+  }
+});

@@ -91,6 +91,16 @@ _REVIEW_HALT_STEP_KEY = "guardrail_review_halt_step"
 GUARDRAIL_REVIEW_WAIT_KEY = "guardrail_review"
 
 
+class GuardrailReviewPending(Exception):
+    """A recorded halt whose adapter emits its native wait after the LLM call."""
+
+    def __init__(self, review: GuardrailReviewHalt, step: int, request: InvokeLLMRequestArguments):
+        super().__init__("Guardrail output requires human review")
+        self.review = review
+        self.step = step
+        self.request = request
+
+
 class _ReviewHalt:
     """Stands in the chunk stream for a model call OE halted for review.
 
@@ -159,6 +169,7 @@ class SecureLLMProxy:
         stable_operation_identity: bool = False,
         durable_memory: DurableMemoryState | None = None,
         guardrail_review_protocol: bool = False,
+        sdk_handles_guardrail_review_pause: bool = False,
     ):
         self.oe_url = oe_url.rstrip("/")
         self.execution_id = execution_id
@@ -174,6 +185,7 @@ class SecureLLMProxy:
         # re-run the calling code: under a durable attempt the proxy then
         # follows OE's review protocol instead of pausing inside the call.
         self.guardrail_review_protocol = guardrail_review_protocol
+        self.sdk_handles_guardrail_review_pause = sdk_handles_guardrail_review_pause
         # Prefer the wrapper's allocator so tool + LLM share one sequence.
         self.operational_steps = operational_steps or OperationalStepAllocator()
         self.last_duration_ms: float = 0.0
@@ -796,6 +808,7 @@ class SecureLLMProxy:
         stop: list[str] | None = None,
         options: LLMInvocationOptions | None = None,
         activity_key: str | None = None,
+        pending_review: GuardrailReviewPending | None = None,
     ) -> Iterator[LLMStreamChunk]:
         """Stream invoke_llm chunks through OE approval and OE-owned SSE relay.
 
@@ -811,21 +824,32 @@ class SecureLLMProxy:
         """
         resolved_step = self._allocate_step(step)
 
-        invoke_request = self._build_invoke_request(
-            messages=messages,
-            stop_sequences=stop,
-            options=options,
-            stream=True,
+        review_id = pending_review.review.review_id if pending_review else None
+        invoke_request = (
+            pending_review.request
+            if pending_review
+            else self._build_invoke_request(
+                messages=messages,
+                stop_sequences=stop,
+                options=options,
+                stream=True,
+            )
         )
 
         attempt = current_attempt_context()
+        if review_id is not None and not self._follows_review_protocol():
+            raise LLMInvocationError(
+                "Resolving a guardrail review requires a durable review protocol"
+            )
         if attempt is None:
             yield from _model_chunks(self._stream_llm(invoke_request, resolved_step))
             return
 
         key = activity_key or f"llm:{resolved_step}"
         halt: _ReviewHalt | None = None
-        for chunk in self._run_llm_activity(invoke_request, resolved_step, key, attempt):
+        for chunk in self._run_llm_activity(
+            invoke_request, resolved_step, key, attempt, review_id=review_id
+        ):
             if isinstance(chunk, _ReviewHalt):
                 halt = chunk
                 continue
@@ -836,6 +860,12 @@ class SecureLLMProxy:
         # Before the pause, so a sibling call halted in the same superstep has
         # its step counted before either resolves.
         self.operational_steps.observe_at_least(halt.step)
+        if self.sdk_handles_guardrail_review_pause:
+            # SDK runners such as ADK need a framework-native wait after the
+            # LLM activity is recorded. Hand the halt to the SDK instead of
+            # interrupting here; OE still owns the held output and decision.
+            note_guardrail_review_wait(review.review_id)
+            raise GuardrailReviewPending(review, halt.step, invoke_request)
 
         # The halted call is a recorded activity by now, so the pause is
         # outside it. Once answered, the same request is sent again, naming the

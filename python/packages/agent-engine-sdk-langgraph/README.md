@@ -428,6 +428,48 @@ and writes fail closed instead of trusting the wire workspace or using bare
 keys. Production adopters of custom keys should still treat checkpoint-key
 uniqueness inside a shared DB as agent-owned.
 
+### Checkpoint serialization
+
+`app.checkpointer()` loads checkpoints with an explicit allowlist instead of
+LangGraph's permissive default. In the permissive mode, stored checkpoint bytes
+can name any Python callable for the loader to import and call. Anyone who can
+write the project's store database could then run code in another agent's pod.
+
+Checkpoint loads reconstruct only:
+
+- LangGraph's built-in safe types (`SAFE_MSGPACK_TYPES` in
+  `langgraph.checkpoint.serde._msgpack`). These cover all LangChain message
+  classes, `Document`, `Interrupt`, `Command`, `Send`, and standard library
+  values such as `datetime`, `UUID`, `Decimal`, and `set`.
+- The types you list in `checkpoint_allowed_types`.
+
+Plain dicts, lists, scalars, and `TypedDict` state round-trip unchanged.
+
+Any other pydantic model, dataclass, or Enum stored in state is not
+reconstructed. It comes back as its raw field data (usually a `dict`), and
+LangGraph logs a `Blocked deserialization of <module>.<name>` warning once per
+type per process. This also applies to a `response_format` model in
+`structured_response`. To keep a type, add it to the App:
+
+```python
+from my_agent.state import Ticket
+
+app = App(
+    app_name="My Agent",
+    # Classes, or (module, name) pairs for types you can't import here.
+    checkpoint_allowed_types=[Ticket, ("my_agent.state", "Priority")],
+)
+```
+
+Only list types whose constructors are safe to call with stored data.
+`checkpoint_allowed_types` does not accept `True`, so the permissive mode
+cannot be turned back on.
+
+List your custom state types before upgrading. A session that resumes without
+its type allowlisted writes the raw data into its next checkpoint, and adding
+the type later does not convert it back, so the session's current state keeps
+the raw data.
+
 ## Development
 
 ### Requirements

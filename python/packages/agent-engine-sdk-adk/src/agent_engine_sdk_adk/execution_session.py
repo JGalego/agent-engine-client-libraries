@@ -103,7 +103,7 @@ def _guard_resolved_tools(agent: ADKAgent, *, parallel_worker: bool = False) -> 
 
 
 def _reject_unsupported_collaboration(root: ADKAgent | ADKNode) -> None:
-    """Validate transfer lifecycles before any durable activity can start."""
+    """Validate configured node lifecycles before durable activities start."""
     from google.adk.agents import BaseAgent as ADKAgentType
 
     agent_root = isinstance(root, ADKAgentType)
@@ -128,6 +128,11 @@ def _reject_unsupported_collaboration(root: ADKAgent | ADKNode) -> None:
             if isinstance(worker_node, ADKAgentType)
         )
     for node in nodes:
+        if node.retry_config is not None:
+            raise UnsupportedDurableADKError(
+                "Google ADK durable workflows do not support node retry_config; "
+                "remove it and use platform-owned provider retries"
+            )
         if not isinstance(node, ADKAgentType):
             continue
         configured_mode = cast(str | None, getattr(node, "mode", None))
@@ -142,6 +147,7 @@ def _reject_unsupported_collaboration(root: ADKAgent | ADKNode) -> None:
                 "agent nodes that configure sub_agents"
             )
         parallel_worker = id(node) in parallel_worker_targets
+        object.__setattr__(node, "_agent_engine_parallel_worker", parallel_worker)
         _validate_supported_tools(
             list(getattr(node, "tools", ())),
             parallel_worker=parallel_worker,
@@ -163,6 +169,9 @@ class DurableSession:
         resume_activity_ids: frozenset[str],
     ) -> None:
         _reject_unsupported_collaboration(adk_agent)
+        from agent_engine_sdk_adk.guardrail_review import install_review_carriers
+
+        install_review_carriers(adk_agent)
         self.attempt = attempt
         self.user_id = user_id
         # OE owns the answers. The adapter keeps only the current resume keys

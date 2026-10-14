@@ -38,6 +38,20 @@ export interface ExecutionResult
  */
 export interface BaseAgent {
   execute(ctx: RequestContext, input: AgentInput): ExecutionResult;
+  /**
+   * Checkpoint the cancelled turn so session history can serve it.
+   *
+   * The AER calls this from the drain teardown of an execution-cancelled run.
+   * Optional: only framework adapters backed by a checkpoint store
+   * (LangGraph) implement it; others omit it and the call is skipped.
+   * Resolves with the committed checkpoint's coordinate — reported to OE so
+   * the branch-source selector can fork from the rescued marker — or null
+   * when nothing was committed.
+   */
+  commitCancelledTurn?(
+    ctx: RequestContext,
+    input: AgentInput,
+  ): Promise<{ thread_id: string; checkpoint_id: string } | null>;
 }
 
 /**

@@ -7,7 +7,7 @@ import builtins
 import json
 import logging
 import threading
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
@@ -28,10 +28,11 @@ from agent_engine_runner_shared.generated.workflow.v1.common_pb2 import (
 from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import AttemptContext
 from agent_engine_runner_shared.models import ExecuteRequest, InterruptResult, StreamingResult
 from agent_engine_runner_shared.workflow import current_attempt_context
+from agent_engine_runner_shared.workflow.attempt import attempt_start_request_from_execute
 from agent_engine_runner_shared.workflow.client import ActivityDispatch, ActivityReplay
 from agent_engine_runner_shared.workflow.protojson import json_to_proto_value
 
-pytestmark = pytest.mark.asyncio
+pytestmark = pytest.mark.anyio
 
 
 def _make_server() -> Any:
@@ -84,17 +85,147 @@ class _FakeHeartbeat:
 
 async def test_native_request_skips_attempt_start() -> None:
     server = _make_server()
-
-    result = await server._start_durable_attempt(
-        ExecuteRequest(
-            execution_id="execution-1",
-            message="hi",
-            platform_api_url="http://oe:8000",
-        ),
-        "session-1",
+    request = ExecuteRequest(
+        execution_id="execution-1",
+        message="hi",
+        platform_api_url="http://oe:8000",
     )
+    # Incomplete tenant identity: the caller-side computation yields no start
+    # request, and the lease call is never reached.
+    start_request = attempt_start_request_from_execute(
+        request,
+        "session-1",
+        server._durability_owner_id,
+        server.runtime.app_name,
+        workflow_version=server.runtime.app_version,
+        memory_enabled=server.runtime.memory_enabled,
+    )
+    assert start_request is None
+
+    result = await server._start_durable_attempt(request, start_request)
 
     assert result is None
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("report_fails", [False, True])
+async def test_cancelled_history_reports_before_scope_release_only_on_explicit_drain(
+    monkeypatch: pytest.MonkeyPatch, cancelled: bool, report_fails: bool
+) -> None:
+    import time
+
+    import agent_engine_runner_shared.server.aer as aer_module
+    from agent_engine_runner_shared.server.drain import DrainReason, DrainRequest
+
+    monkeypatch.setattr(aer_module, "AttemptHeartbeat", _FakeHeartbeat)
+    server = _make_server()
+    server.runtime._memory_writer = None
+    server._start_durable_attempt = AsyncMock(return_value=_attempt())
+    order = []
+    history = Mock()
+    history.capture.return_value = ("opener", [], 0, None)
+
+    class CaptureAgent:
+        @contextmanager
+        def cancelled_history_scope(self, ctx: Any, value: Any):
+            assert value.payload["message"] == "prompt"
+            yield history
+            order.append("released")
+
+    server.runtime.get_agent.return_value = CaptureAgent()
+
+    async def stream(*args: Any) -> Any:
+        if cancelled:
+            server.drain_registry.apply(
+                DrainRequest(
+                    request_id="drain",
+                    execution_id="execution-1",
+                    reason=DrainReason.EXECUTION_CANCELLED,
+                    deadline_at_ms=int(time.time() * 1000) + 1000,
+                )
+            )
+        raise asyncio.CancelledError()
+
+    async def report(*args: Any) -> None:
+        assert order == []
+        assert current_attempt_context() == _attempt()
+        order.append("reported")
+        if report_fails:
+            raise RuntimeError("report unavailable")
+
+    server._execute_via_agent_stream = stream
+    server._report_cancelled_history = AsyncMock(side_effect=report)
+    response = await server._handle_execute(
+        ExecuteRequest(
+            execution_id="execution-1",
+            session_id="session-1",
+            message="prompt",
+            platform_api_url="http://localhost",
+        )
+    )
+    assert response.status == "cancelled"
+    assert order == (["reported", "released"] if cancelled else ["released"])
+    server._send_callback_body.assert_not_awaited()
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+async def test_late_cancel_drain_cannot_retain_completed_or_timed_out_history(
+    monkeypatch: pytest.MonkeyPatch, timed_out: bool
+) -> None:
+    import time
+
+    import agent_engine_runner_shared.server.aer as aer_module
+    from agent_engine_runner_shared.server.drain import DrainReason, DrainRequest
+
+    monkeypatch.setattr(aer_module, "AttemptHeartbeat", _FakeHeartbeat)
+    server = _make_server()
+    server.runtime._memory_writer = None
+    server._start_durable_attempt = AsyncMock(return_value=_attempt())
+    released = []
+
+    class CaptureAgent:
+        @contextmanager
+        def cancelled_history_scope(self, ctx: Any, value: Any):
+            yield Mock()
+            released.append(True)
+
+    server.runtime.get_agent.return_value = CaptureAgent()
+    server._report_cancelled_history = AsyncMock()
+
+    def late_drain() -> None:
+        server.drain_registry.apply(
+            DrainRequest(
+                request_id="drain",
+                execution_id="execution-1",
+                reason=DrainReason.EXECUTION_CANCELLED,
+                deadline_at_ms=int(time.time() * 1000) + 1000,
+            )
+        )
+
+    async def stream(*args: Any) -> Any:
+        if timed_out:
+            raise asyncio.TimeoutError()
+        late_drain()
+        return StreamingResult(content="done", messages=[])
+
+    async def timeout_chunk(*args: Any, **kwargs: Any) -> None:
+        late_drain()
+        raise asyncio.CancelledError()
+
+    server._execute_via_agent_stream = stream
+    if timed_out:
+        server._send_stream_chunk = timeout_chunk
+    response = await server._handle_execute(
+        ExecuteRequest(
+            execution_id="execution-1",
+            session_id="session-1",
+            message="prompt",
+            platform_api_url="http://localhost",
+        )
+    )
+    assert response.status == ("cancelled" if timed_out else "completed")
+    server._report_cancelled_history.assert_not_awaited()
+    assert released == [True]
 
 
 async def test_manifest_feature_does_not_override_oe_session_assignment(
@@ -116,19 +247,25 @@ async def test_manifest_feature_does_not_override_oe_session_assignment(
     )
     register_workflow_adapter("langgraph", "1")
     try:
-        result = await server._start_durable_attempt(
-            ExecuteRequest(
-                execution_id="execution-1",
-                session_id="session-1",
-                workspace_id="workspace-1",
-                org_id="org-1",
-                project_id="project-1",
-                user_id="user-1",
-                message="hi",
-                platform_api_url="http://oe:8000",
-            ),
-            "session-1",
+        request = ExecuteRequest(
+            execution_id="execution-1",
+            session_id="session-1",
+            workspace_id="workspace-1",
+            org_id="org-1",
+            project_id="project-1",
+            user_id="user-1",
+            message="hi",
+            platform_api_url="http://oe:8000",
         )
+        start_request = attempt_start_request_from_execute(
+            request,
+            "session-1",
+            server._durability_owner_id,
+            server.runtime.app_name,
+            workflow_version=server.runtime.app_version,
+            memory_enabled=server.runtime.memory_enabled,
+        )
+        result = await server._start_durable_attempt(request, start_request)
     finally:
         clear_workflow_adapter()
 
@@ -293,6 +430,8 @@ async def test_durable_wrapper_cleanup_failure_still_reports_callback(
         assert get_current_execution_id() is None
         assert current_attempt_context() is None
         assert callback["suspend_generation"] == 7
+        assert callback["attempt_id"] == "attempt-1"
+        assert callback["attempt_fence"] == 7
         settlement_order.append("callback")
 
     server._send_callback_body = AsyncMock(side_effect=_capture_callback)
@@ -602,7 +741,9 @@ async def test_execution_failure_is_preserved_when_cleanup_also_fails(
         settlement_order.append("wrapper-close")
         raise RuntimeError("wrapper-close")
 
-    async def _capture_callback(*_args: Any, **_kwargs: Any) -> None:
+    async def _capture_callback(_oe_url: str, callback: dict[str, Any], **_kwargs: Any) -> None:
+        assert callback["attempt_id"] == "attempt-1"
+        assert callback["attempt_fence"] == 7
         settlement_order.append("callback")
 
     _FakeHeartbeat.instances = []
@@ -940,6 +1081,235 @@ async def test_failed_heartbeat_start_fails_closed(
     server._execute_via_agent_stream.assert_not_awaited()
 
 
+async def test_cancel_during_lease_start_still_retains_cancelled_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Stop while the lease activates must still retain the turn.
+
+    The capture scope is entered before the blocking heartbeat start, so the
+    cancellation path finds a history to report instead of losing it.
+    """
+    import time
+
+    import agent_engine_runner_shared.server.aer as aer_module
+    from agent_engine_runner_shared.server.drain import DrainReason, DrainRequest
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class _BlockingHeartbeat(_FakeHeartbeat):
+        def start(self) -> None:
+            started.set()
+            release.wait(timeout=5)
+
+    _FakeHeartbeat.instances = []
+    monkeypatch.setattr(aer_module, "AttemptHeartbeat", _BlockingHeartbeat)
+
+    server = _make_server()
+    server.runtime._memory_writer = None
+    server._start_durable_attempt = AsyncMock(return_value=_attempt())
+    history = Mock()
+    released: list[str] = []
+    reported: list[str] = []
+
+    class CaptureAgent:
+        @contextmanager
+        def cancelled_history_scope(self, ctx: Any, value: Any):
+            yield history
+            released.append("released")
+
+    server.runtime.get_agent.return_value = CaptureAgent()
+    server._execute_via_agent_stream = AsyncMock()
+
+    async def report(*args: Any) -> None:
+        assert current_attempt_context() == _attempt()
+        reported.append("reported")
+
+    server._report_cancelled_history = AsyncMock(side_effect=report)
+
+    task = asyncio.create_task(
+        server._handle_execute(
+            ExecuteRequest(
+                execution_id="execution-1",
+                session_id="session-1",
+                message="prompt",
+                platform_api_url="http://localhost",
+            )
+        )
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        server.drain_registry.apply(
+            DrainRequest(
+                request_id="drain",
+                execution_id="execution-1",
+                reason=DrainReason.EXECUTION_CANCELLED,
+                deadline_at_ms=int(time.time() * 1000) + 1000,
+            )
+        )
+        task.cancel()  # what the drain does to the handler task
+        with suppress(asyncio.CancelledError):
+            response = await task
+        assert response.status == "cancelled"
+    finally:
+        release.set()
+
+    assert reported == ["reported"]
+    assert released == ["released"]
+    server._execute_via_agent_stream.assert_not_awaited()
+
+
+async def test_cancel_during_attempt_activation_retains_the_opener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Stop that cancels the activation await must still retain the turn.
+
+    OE refuses to start an attempt for an execution it has already cancelled, so
+    the in-flight response is the only receipt left: the handler keeps it alive
+    and reports the turn's opener under the attempt it names.
+    """
+    import time
+
+    import agent_engine_runner_shared.server.aer as aer_module
+    from agent_engine_runner_shared.server.drain import DrainReason, DrainRequest
+
+    monkeypatch.setattr(aer_module, "AttemptHeartbeat", _FakeHeartbeat)
+    # The recovery only runs for a request that issued a start request, so
+    # durable eligibility is stubbed rather than reconstructed from a fixture.
+    monkeypatch.setattr(
+        aer_module, "attempt_start_request_from_execute", lambda *args, **kwargs: object()
+    )
+    server = _make_server()
+    server.runtime._memory_writer = None
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_start(*_args: Any) -> Any:
+        entered.set()
+        await release.wait()
+        return _attempt()
+
+    server._start_durable_attempt = blocked_start
+    server._execute_via_agent_stream = AsyncMock()
+    server._report_cancelled_history = AsyncMock()
+    sent: list[Any] = []
+
+    async def capture_send(*args: Any, **_kwargs: Any) -> None:
+        sent.append(args)
+
+    server._send_cancelled_history = capture_send
+
+    task = asyncio.create_task(
+        server._handle_execute(
+            ExecuteRequest(
+                execution_id="execution-1",
+                session_id="session-1",
+                message="prompt",
+                platform_api_url="http://localhost",
+            )
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    server.drain_registry.apply(
+        DrainRequest(
+            request_id="drain",
+            execution_id="execution-1",
+            reason=DrainReason.EXECUTION_CANCELLED,
+            deadline_at_ms=int(time.time() * 1000) + 5000,
+        )
+    )
+    task.cancel()  # what the drain does to the handler task
+    release.set()  # the receipt OE had already committed, arriving after the Stop
+    with suppress(asyncio.CancelledError):
+        response = await task
+
+    assert response.status == "cancelled"
+    # No tenant work ran, and no terminal callback was staged.
+    server._execute_via_agent_stream.assert_not_awaited()
+    server._send_callback_body.assert_not_awaited()
+    # The opener is retained under the attempt the in-flight receipt named.
+    assert len(sent) == 1
+    _oe_url, attempt, capture = sent[0]
+    assert attempt == _attempt()
+    opener_id, messages, ordinal, source_hash = capture
+    assert opener_id == "durable-input:execution-1"
+    assert ordinal == 0
+    assert source_hash is None
+    assert [(message.id, message.content.string_value) for message in messages] == [
+        ("durable-input:execution-1", "prompt")
+    ]
+
+
+async def test_cancel_with_expired_drain_budget_reaps_the_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Stop that leaves the shielded activation in flight must not outlive the handler.
+
+    When the drain budget is already spent, receipt recovery returns without
+    collecting the attempt, so cleanup must cancel and await the in-flight
+    StartAttempt task itself rather than let it run past the handler.
+    """
+    import time
+
+    import agent_engine_runner_shared.server.aer as aer_module
+    from agent_engine_runner_shared.server.drain import DrainReason, DrainRequest
+
+    monkeypatch.setattr(aer_module, "AttemptHeartbeat", _FakeHeartbeat)
+    monkeypatch.setattr(
+        aer_module, "attempt_start_request_from_execute", lambda *args, **kwargs: object()
+    )
+    server = _make_server()
+    server.runtime._memory_writer = None
+
+    entered = asyncio.Event()
+    activation_cancelled = asyncio.Event()
+
+    async def blocked_start(*_args: Any) -> Any:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            activation_cancelled.set()
+            raise
+        return _attempt()
+
+    server._start_durable_attempt = blocked_start
+    server._execute_via_agent_stream = AsyncMock()
+    server._report_cancelled_history = AsyncMock()
+    server._send_cancelled_history = AsyncMock()
+
+    task = asyncio.create_task(
+        server._handle_execute(
+            ExecuteRequest(
+                execution_id="execution-1",
+                session_id="session-1",
+                message="prompt",
+                platform_api_url="http://localhost",
+            )
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    server.drain_registry.apply(
+        DrainRequest(
+            request_id="drain",
+            execution_id="execution-1",
+            reason=DrainReason.EXECUTION_CANCELLED,
+            deadline_at_ms=int(time.time() * 1000) - 1,  # budget already spent
+        )
+    )
+    task.cancel()  # what the drain does to the handler task
+    with suppress(asyncio.CancelledError):
+        response = await task
+
+    assert response.status == "cancelled"
+    # The in-flight activation was cancelled and reaped, not left running.
+    assert activation_cancelled.is_set()
+    # An expired budget skips receipt recovery, so nothing is reported.
+    server._report_cancelled_history.assert_not_awaited()
+    server._send_cancelled_history.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     ("outcome", "expected_status"),
     [
@@ -1018,3 +1388,59 @@ async def test_agent_is_built_before_the_durable_routing_decision() -> None:
         )
 
     assert order == ["get_agent"]
+
+
+async def test_durable_suspension_reports_provisional_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A HITL suspension ends the attempt, so the AER reports the display
+    transcript now (provisionally) — a later Stop finds no execute handler."""
+    import agent_engine_runner_shared.server.aer as aer_module
+
+    _FakeHeartbeat.instances = []
+    monkeypatch.setattr(aer_module, "AttemptHeartbeat", _FakeHeartbeat)
+
+    server = _make_server()
+    server.runtime._memory_writer = None
+    server._start_durable_attempt = AsyncMock(return_value=_attempt())
+    history = Mock()
+    history.capture.return_value = ("opener", [], 0, None)
+    released: list[bool] = []
+
+    class CaptureAgent:
+        @contextmanager
+        def cancelled_history_scope(self, ctx: Any, value: Any):
+            yield history
+            released.append(True)
+
+    server.runtime.get_agent.return_value = CaptureAgent()
+    server._execute_via_agent_stream = AsyncMock(
+        return_value=InterruptResult(
+            suspend_payload={
+                "suspend_reason": "awaiting_human_review",
+                "suspend_context": {},
+            },
+            messages=[],
+        )
+    )
+    reported: list[dict[str, Any]] = []
+
+    async def _report(
+        _oe_url: str, _attempt: Any, captured: Any, *, provisional: bool = False
+    ) -> None:
+        reported.append({"provisional": provisional, "captured": captured is history})
+
+    server._report_cancelled_history = AsyncMock(side_effect=_report)
+
+    response = await server._handle_execute(
+        ExecuteRequest(
+            execution_id="execution-1",
+            session_id="session-1",
+            message="prompt",
+            platform_api_url="http://localhost",
+        )
+    )
+
+    assert response.status == "suspended"
+    assert reported == [{"provisional": True, "captured": True}]
+    assert released == [True]

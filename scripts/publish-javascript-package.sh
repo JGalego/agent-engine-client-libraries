@@ -1,52 +1,24 @@
 #!/usr/bin/env bash
-# Publish one JavaScript SDK package. Skips if that version is already on the
-# registry. The caller must have already run npm ci and built this package
-# (and its workspace dependencies). Sequencing across packages is the caller's
-# job (GHA needs).
+# Publish one JavaScript SDK package to npm. The caller must have already run
+# npm ci and built this package (and its workspace dependencies). Sequencing
+# across packages is the caller's job (GHA needs).
 #
 # Required:
 #   --name NAME            npm package name (e.g. @mongodb-js/agent-engine-sdk)
 #   --directory DIR        directory under javascript/packages/
-#   NPM_REGISTRY           registry URL, e.g. http://127.0.0.1:4873
 #
 # Optional:
 #   --packages-root PATH   packages tree (default: cwd)
-#   NPM_NPMRC              npmrc holding the registry auth token (mock registry)
 #   DRY_RUN                "true" packs and validates without uploading
-#   PROBE_ATTEMPTS         registry probe retries (default: 5)
-#   PROBE_CONNECT_TIMEOUT  connection timeout per probe in seconds (default: 10)
-#   PROBE_MAX_TIME         total timeout per probe in seconds (default: 30)
+#
+# The dist-tag is always explicit because npm defaults to `latest`: a
+# pre-release goes to `next`, and a stable version takes `latest` only when it
+# is at least the current `latest`, otherwise `release-v<MAJOR>.<MINOR>`.
+# (A bare `v<MAJOR>.<MINOR>` is rejected: npm forbids tags that parse as a
+# semver range.)
 set -euo pipefail
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-
-PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-5}"
-PROBE_CONNECT_TIMEOUT="${PROBE_CONNECT_TIMEOUT:-10}"
-PROBE_MAX_TIME="${PROBE_MAX_TIME:-30}"
-
-# This probe gates a publish chain: an unretried 429 or 5xx from a real
-# registry fails this package and skips every dependent, which leaves a
-# partially published release that cannot be replayed cleanly.
-probe_status() {
-  local url=$1
-  local output=$2
-  local attempt code="000" delay=1
-  for ((attempt = 1; attempt <= PROBE_ATTEMPTS; attempt++)); do
-    code="$(curl -sS --connect-timeout "$PROBE_CONNECT_TIMEOUT" --max-time "$PROBE_MAX_TIME" \
-      -o "$output" -w '%{http_code}' "$url" || true)"
-    case "$code" in
-      200|404)
-        printf '%s' "$code"
-        return 0
-        ;;
-    esac
-    [ "$attempt" -lt "$PROBE_ATTEMPTS" ] || break
-    echo "registry probe got HTTP ${code} for ${url}; retrying in ${delay}s" >&2
-    sleep "$delay"
-    delay=$((delay * 2))
-  done
-  printf '%s' "$code"
-}
 
 NAME=""
 DIRECTORY=""
@@ -57,7 +29,7 @@ while [ "$#" -gt 0 ]; do
     --directory) DIRECTORY=${2:?}; shift 2 ;;
     --packages-root) PACKAGES_ROOT=${2:?}; shift 2 ;;
     -h|--help)
-      sed -n '2,16p' "$0"
+      sed -n '2,18p' "$0"
       exit 0
       ;;
     *) die "unknown argument: $1" ;;
@@ -66,41 +38,44 @@ done
 
 [ -n "$NAME" ] || die "--name is required"
 [ -n "$DIRECTORY" ] || die "--directory is required"
-: "${NPM_REGISTRY:?NPM_REGISTRY is not set}"
 
 PACKAGES_ROOT="$(cd "$PACKAGES_ROOT" && pwd)"
 manifest="$PACKAGES_ROOT/javascript/packages/$DIRECTORY/package.json"
 [ -f "$manifest" ] || die "missing $manifest"
 
 version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$manifest")"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.-]*)?$ ]] \
+SEMVER_PATTERN='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-alpha\.(0|[1-9][0-9]*))?$'
+[[ "$version" =~ $SEMVER_PATTERN ]] \
   || die "$manifest has an invalid version: $version"
 
-encoded="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe="@"))' "$NAME")"
-url="${NPM_REGISTRY%/}/${encoded}/${version}"
-code="$(probe_status "$url" /dev/null)"
-case "$code" in
-  404) ;;
-  200)
-    echo "skip ${NAME}@${version} (already on npm registry)"
+# The release workflow runs on every push to main, so most runs see a version
+# that is already published; skip it so the run and its dependents succeed.
+view_err="$(mktemp)"
+if published="$(npm view "${NAME}@${version}" version 2>"$view_err")"; then
+  rm -f "$view_err"
+  if [ "$published" = "$version" ]; then
+    echo "skip ${NAME}@${version} (already on npm)"
     exit 0
-    ;;
-  *)
-    die "npm registry returned HTTP ${code} for ${url}"
-    ;;
-esac
+  fi
+elif grep -q E404 "$view_err"; then
+  rm -f "$view_err"
+else
+  cat "$view_err" >&2
+  rm -f "$view_err"
+  die "could not check whether ${NAME}@${version} is already on npm"
+fi
 
 DRY_RUN="${DRY_RUN:-false}"
 if [ "$DRY_RUN" = "true" ]; then
-  echo "dry-run ${NAME}@${version}"
+  echo "dry-run ${NAME}@${version} (validates packaging; does not validate upload authorization)"
 else
   echo "publish ${NAME}@${version}"
 fi
 original="$(mktemp)"
 trap 'cp "$original" "$manifest"; rm -f "$original"' EXIT
 cp "$manifest" "$original"
-NPM_REGISTRY="$NPM_REGISTRY" python3 - "$manifest" <<'PY'
-import json, os, sys
+python3 - "$manifest" <<'PY'
+import json, sys
 
 path = sys.argv[1]
 data = json.load(open(path, encoding="utf-8"))
@@ -109,22 +84,72 @@ scripts = data.get("scripts")
 if isinstance(scripts, dict):
     scripts.pop("prepare", None)
     data["scripts"] = scripts
-data["publishConfig"] = {"registry": os.environ["NPM_REGISTRY"]}
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2)
     fh.write("\n")
 PY
 
+# Semver precedence, duplicated from the monorepo's scripts/release_versions.py
+# because only this packages tree is synced downstream.
+version_at_least() {
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+
+def key(version):
+    match = re.fullmatch(
+        r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+        r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?",
+        version,
+    )
+    if not match:
+        print(f"ERROR: not a semver version: {version}", file=sys.stderr)
+        sys.exit(2)
+    core = tuple(int(part) for part in match.groups()[:3])
+    if match.group(4) is None:
+        return core, (1,)
+    ids = tuple((0, int(i), "") if i.isdigit() else (1, 0, i) for i in match.group(4).split("."))
+    return core, (0, ids)
+
+sys.exit(0 if key(sys.argv[1]) >= key(sys.argv[2]) else 1)
+PY
+}
+
+resolve_dist_tag() {
+  case "$version" in
+    *-*)
+      echo next
+      return 0
+      ;;
+  esac
+  local tags err current
+  err="$(mktemp)"
+  if ! tags="$(npm view "$NAME" dist-tags --json 2>"$err")"; then
+    if grep -q E404 "$err"; then
+      rm -f "$err"
+      echo latest
+      return 0
+    fi
+    cat "$err" >&2
+    rm -f "$err"
+    die "could not read npm dist-tags for $NAME"
+  fi
+  rm -f "$err"
+  current="$(printf '%s' "$tags" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print((json.loads(t) or {}).get("latest") or "" if t else "")')"
+  local at_least=0
+  [ -z "$current" ] || version_at_least "$version" "$current" || at_least=$?
+  case "$at_least" in
+    0) echo latest ;;
+    1) echo "release-v$(printf '%s' "$version" | cut -d. -f1,2)" ;;
+    *) die "cannot compare ${version} with npm latest ${current}" ;;
+  esac
+}
+
 (
   cd "$PACKAGES_ROOT/javascript/packages/$DIRECTORY"
-  [ -n "${NPM_NPMRC:-}" ] && export NPM_CONFIG_USERCONFIG="$NPM_NPMRC"
-  publish_args=(--ignore-scripts --access public --registry "$NPM_REGISTRY")
+  dist_tag="$(resolve_dist_tag)"
+  echo "npm dist-tag for ${NAME}@${version}: ${dist_tag}"
+  publish_args=(--ignore-scripts --access public --tag "$dist_tag")
   if [ "$DRY_RUN" = "true" ]; then
-    # npm publish --dry-run never contacts the registry with credentials, so
-    # it proves the tarball is well formed but not that release-day auth
-    # works. Exercise the credential path explicitly.
-    npm whoami --registry "$NPM_REGISTRY" \
-      || die "npm authentication failed against ${NPM_REGISTRY}"
     publish_args+=(--dry-run)
   fi
   npm publish "${publish_args[@]}"

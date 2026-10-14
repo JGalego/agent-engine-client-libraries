@@ -42,6 +42,25 @@ auth:
   env: JIRA_TOKEN
 ```
 
+For delegated OAuth, replace that auth block with an explicit provider binding:
+
+```yaml
+auth:
+  type: oauth
+  provider_type: github
+  scopes: [repo]
+```
+
+`provider_type` is the key of a provider configured for the project, independent
+of the resource API's base URL. The scopes apply to every exposed operation in
+this connector. Registration carries this policy outside the model's argument
+schema. The Orchestration Engine resolves a credential for the saved application
+user and passes it to the Tool Pod for that invocation. A missing or invalid token
+stops the HTTP call; OAuth never falls back to a tenant environment secret.
+Existing static auth modes continue to use their configured environment bindings.
+Catalog regeneration preserves the authored OAuth binding and records only
+secret-free Bearer presentation in the catalog.
+
 The pre-materialized index paths are relative to the index and must remain inside its
 directory. AER loads the schemas as ordinary remote tools. Tool Pod startup loads the
 same materialized view and owns one `ConnectorExecutor` per connector.
@@ -52,7 +71,9 @@ same materialized view and owns one `ConnectorExecutor` per connector.
 
 Own one `ConnectorExecutor(definitions)` per connector in a Tool Pod process. Call
 `execute(tool_name, arguments, env=tenant_secrets)` after authorization; the environment
-mapping is request-local and defaults to the tenant-owned process environment. Close
+mapping is request-local and defaults to the tenant-owned process environment for
+static auth. OAuth additionally requires `authorization=ToolAuthorization(...)`;
+the Tool Pod supplies it from request context and the executor never retains it. Close
 the executor at shutdown after in-flight calls finish, or use it as a context manager.
 
 The compiled format is the stable `source`, `auth`, `tools`, `params` and

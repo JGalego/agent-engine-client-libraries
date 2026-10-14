@@ -16,7 +16,11 @@ interface PendingCallback {
 
 function callbackKey(callback: ExecutorCallbackRequest): string | null {
   if (callback.status !== "SUSPENDED") {
-    return terminalCallbackKey(callback.execution_id);
+    return terminalCallbackKey(
+      callback.execution_id,
+      callback.attempt_id,
+      callback.attempt_fence,
+    );
   }
   // Rolling-upgrade compatibility for OE versions that do not yet send a
   // suspension generation. Remove this bounded legacy path once every
@@ -29,8 +33,16 @@ function callbackKey(callback: ExecutorCallbackRequest): string | null {
   ]);
 }
 
-function terminalCallbackKey(executionId: string): string {
-  return JSON.stringify(["terminal", executionId]);
+function terminalCallbackKey(
+  executionId: string,
+  attemptId?: string,
+  attemptFence?: number,
+): string {
+  return JSON.stringify([
+    "terminal",
+    executionId,
+    ...(attemptId === undefined ? [] : [attemptId, attemptFence]),
+  ]);
 }
 
 function waitForRetry(ms: number, signal: AbortSignal): Promise<boolean> {
@@ -111,8 +123,15 @@ export class CallbackDelivery {
     this.pending.clear();
   }
 
-  async waitForTerminal(executionId: string): Promise<boolean> {
-    const key = terminalCallbackKey(executionId);
+  async waitForTerminal(
+    executionId: string,
+    origin: Pick<ExecutorCallbackRequest, "attempt_id" | "attempt_fence"> = {},
+  ): Promise<boolean> {
+    const key = terminalCallbackKey(
+      executionId,
+      origin.attempt_id,
+      origin.attempt_fence,
+    );
     const task = this.tasks.get(key);
     if (task !== undefined) await task;
     return !this.retryController.signal.aborted && !this.pending.has(key);

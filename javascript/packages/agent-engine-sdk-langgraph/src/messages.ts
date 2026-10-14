@@ -109,17 +109,25 @@ export function unwrapMessageValues(value: unknown): unknown[] {
   return Array.isArray(value) ? [...value] : [value];
 }
 
-function copyMessageWithId(message: BaseMessage, id: string): BaseMessage {
+/** Copy a message carrying a new id — BaseMessage ids only stick via
+ * construction; post-construction assignment does not survive serde. */
+export function copyMessageWithId(
+  message: BaseMessage,
+  id: string,
+): BaseMessage {
   const MessageType = message.constructor as new (
     fields: Record<string, unknown>,
   ) => BaseMessage;
   return new MessageType({ ...message, id });
 }
 
-/** Normalize graph-input messages and assign IDs where the caller requires them. */
+/** Normalize graph-input messages via LangChain's message-like coercion and,
+ * when `missingId` is given, assign ids to id-less messages. Omitting the
+ * callback converts only — the native cancelled-turn capture's build-boundary
+ * use, where id minting stays with the per-mode capture/teardown path. */
 export function assignMissingGraphInputMessageIds(
   graphInput: unknown,
-  missingId: (index: number) => string,
+  missingId?: (index: number) => string,
 ): unknown {
   if (
     graphInput === null ||
@@ -137,7 +145,8 @@ export function assignMissingGraphInputMessageIds(
     Overwrite.isInstance(rawMessages) && "__overwrite__" in rawMessages;
   const messages = unwrapMessageValues(rawMessages).map((value, index) => {
     const message = coerceMessageLikeToMessage(value as never);
-    return message.id !== undefined && message.id !== null
+    if (message.id !== undefined && message.id !== null) return message;
+    return missingId === undefined
       ? message
       : copyMessageWithId(message, missingId(index));
   });

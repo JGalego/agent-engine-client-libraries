@@ -7,6 +7,7 @@ import {
   type CompiledStateGraph,
   type Interrupt,
 } from "@langchain/langgraph";
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type {
   AgentInput,
@@ -23,6 +24,7 @@ import {
   type LangGraphCheckpoint,
 } from "./checkpoint_branch.js";
 import type { DurableSubgraphResolver } from "./durable_subgraphs.js";
+import { assignMissingGraphInputMessageIds } from "./messages.js";
 import { PlatformCheckpointer } from "./platform_checkpointer.js";
 import { takeContinueWithoutUserMessage } from "./session_fork.js";
 import {
@@ -181,14 +183,41 @@ export abstract class ExecutionSession {
     return config;
   }
 
-  protected freshGraphInput(ctx: RequestContext = this.ctx): unknown {
+  /**
+   * Id for the default-path input message. Native sessions assign it at build
+   * time so the cancelled-turn commit can identify the turn opener by
+   * identity, not prompt text; durable sessions leave it unset — their stable
+   * replay identity is filled per attempt in DurableSession.prepareRun.
+   */
+  protected freshInputMessageId(): string | undefined {
+    return `input:${randomUUID()}`;
+  }
+
+  protected freshGraphInput(
+    ctx: RequestContext = this.ctx,
+    openerId?: string,
+  ): unknown {
     if (this.prepareInput !== null) {
-      return this.prepareInput(this.input, ctx);
+      // Convert supported message-like entries (tuples, role dicts, strings)
+      // to real messages at the build boundary: the graph would coerce them at
+      // reducer time with a reducer-minted id the native cancelled-turn
+      // capture could never know. No ids are minted here (the callback is
+      // omitted) — native capture assigns `input:` ids, durable prepareRun
+      // assigns replay-stable ones.
+      return assignMissingGraphInputMessageIds(
+        this.prepareInput(this.input, ctx),
+      );
     }
     const payload = payloadDict(this.input);
+    // exactOptionalPropertyTypes: an explicit undefined id is not an absent
+    // one — durable sessions leave the key out entirely.
+    const inputMessageId = openerId ?? this.freshInputMessageId();
     const graphInput: Record<string, unknown> = {
       messages: [
-        new HumanMessage({ content: String(payload["message"] ?? "") }),
+        new HumanMessage({
+          content: String(payload["message"] ?? ""),
+          ...(inputMessageId !== undefined ? { id: inputMessageId } : {}),
+        }),
       ],
     };
     if (ctx.userId) graphInput["user_id"] = ctx.userId;

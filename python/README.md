@@ -30,4 +30,4 @@ uv sync
 uv run ruff check .
 ```
 
-Release notes are in [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
+Release notes are on the [GitHub releases](https://github.com/mongodb/agent-engine-client-libraries/releases) page.

@@ -54,6 +54,18 @@ def _bundle_for(tmp_path: Path, **kwargs) -> ConnectorBundle:
 
 
 class TestMaterializeConnectors:
+    def test_oauth_authoring_overrides_catalog_bearer_presentation(self, tmp_path):
+        """Materialization keeps the explicit provider binding and scopes for every tool."""
+        authored = TOOL_YAML.replace(
+            "type: bearer\n  env: JIRA_TOKEN",
+            "type: oauth\n  provider_type: custom-github\n  scopes: [repo]",
+        )
+        bundle = _bundle_for(tmp_path, tool_yaml=authored)
+        for tool in bundle.tools:
+            assert tool.registration_metadata["provider_type"] == "custom-github"
+            assert tool.registration_metadata["scopes"] == ["repo"]
+            assert tool.connector.definitions.auth.env is None
+
     def test_materializes_bundle_matching_runtime_contract(self, tmp_path):
         bundle = _bundle_for(tmp_path)
 

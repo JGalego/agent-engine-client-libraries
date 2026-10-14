@@ -12,17 +12,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from langchain_core.messages import convert_to_messages
-from langchain_core.runnables import RunnableConfig
-from langgraph.errors import GraphInterrupt
-from langgraph.types import Command, Interrupt, Overwrite
-from agent_engine_sdk import (
-    AgentInput,
-    AgentOutput,
-    Message,
-    RequestContext,
-    StreamEvent,
-)
 from agent_engine_runner_shared.context import (
     get_current_oe_url,
     get_current_user_id,
@@ -51,7 +40,19 @@ from agent_engine_runner_shared.workflow.context import (
     set_activity_reconstruction_ids,
 )
 from agent_engine_runner_shared.workflow.protojson import json_to_proto_struct
+from agent_engine_sdk import (
+    AgentInput,
+    AgentOutput,
+    Message,
+    RequestContext,
+    StreamEvent,
+)
+from langchain_core.messages import convert_to_messages
+from langchain_core.runnables import RunnableConfig
+from langgraph.errors import GraphInterrupt
+from langgraph.types import Command, Interrupt, Overwrite
 
+from agent_engine_runner_shared.workflow import current_cancelled_history
 from agent_engine_sdk_langgraph.checkpoint_branch import (
     LangGraphCheckpoint,
     pending_interrupts_from_state,
@@ -77,6 +78,7 @@ from agent_engine_sdk_langgraph.suspend import (
     invoke_suspend_output,
     stream_hitl_suspend_event,
 )
+from agent_engine_sdk_langgraph.workflow_state import channel_values_to_state_snapshot
 
 _FRAMEWORK_INTERRUPT_REASON = "agent_interrupt"
 _DIRECT_INTERRUPT_ACTIVITY_NAME = "langgraph.interrupt"
@@ -329,10 +331,23 @@ class DurableSession(ExecutionSession):
                 else ctx
             )
             prepared_input = self.prepare_input(input, prepare_context)
-            return assign_stable_execution_message_ids(prepared_input, self.attempt)
-        return assign_stable_execution_message_ids(
-            self._fresh_graph_input(ctx, input), self.attempt
-        )
+            graph_input = assign_stable_execution_message_ids(
+                prepared_input, self.attempt
+            )
+        else:
+            graph_input = assign_stable_execution_message_ids(
+                self._fresh_graph_input(ctx, input), self.attempt
+            )
+        history = current_cancelled_history.get()
+        if history is not None and history.matches(self.attempt):
+            if not isinstance(graph_input, Command):
+                messages = graph_input.get("messages", [])
+                if isinstance(messages, Overwrite):
+                    messages = messages.value
+                history.normalized_input(
+                    channel_values_to_state_snapshot({"messages": messages})
+                )
+        return graph_input
 
     def build_config(self, ctx: RequestContext) -> RunnableConfig:
         config = self._base_config(ctx)

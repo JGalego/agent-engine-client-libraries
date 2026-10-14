@@ -61,6 +61,65 @@ a step only at a quiescent coordination frontier: all waits in that frontier
 join atomically, the resolved frontier commits its step, and the next
 `Runner.run_async` continuation begins the next step.
 
+Native node `retry_config` is unsupported, including on containing Workflows
+and configured sub-agents. Re-running a node competes with durable activity
+replay, so the adapter rejects this configuration before execution. The platform
+owns transient provider retries within a single LLM activity.
+
+## Remote MCP tools
+
+Remote MCP servers declared under `mcp:` in `agent.yaml` are discovered at
+startup in AER mode and exposed through `app.tools()` as ready-made ADK tools:
+the model sees each server's tool name (`<server>__<tool>`), description, and
+input schema, and every call routes through the Atlas Agent Engine secure
+wrapper to the Tool Pod, which performs the `tools/call` request against the
+server. Because they carry the server's raw JSON schema, these tools are ADK
+`BaseTool` instances rather than plain callables, so they are not wrapped with
+`FunctionTool(..., require_confirmation=True)`; MCP calls are governed by OE
+policy and guardrails instead of native ADK confirmation. Tool Pods do not
+discover MCP tools; they resolve each call from `agent.yaml` at execution time.
+
+Discovery happens during `App` construction: each configured server receives
+one `tools/list` request, bounded by that server's `timeout_seconds`. An
+unreachable server, missing auth, or a failed `tools/list` raises
+`MCPConfigError` and fails construction — an agent never starts with a
+partially discovered tool set. Because construction performs that network I/O
+synchronously, build `App` outside a running event loop; constructing it
+inside one raises `MCPConfigError` with that guidance.
+
+`tool_call_id` is a reserved argument name: the adapter passes ADK's
+function-call id to the platform under that name for execution-log joins, and
+any model-supplied argument with that name is dropped before the call (a
+non-null value is logged). An MCP server whose tool schema declares a
+`tool_call_id` property therefore never receives that argument.
+
+## Guardrail output review
+
+An `llm_output` guardrail with action `require_review` pauses the reviewed
+model call through the same durable wait and session `resume_map` interface.
+No application review tool is required. Approve releases the original model
+response, including its tool calls, without another provider call or policy
+check. Deny ends the turn with `policy_denied` and releases no output.
+
+The OE owns the held response and decision. Replay reconstructs the request
+that halted; resolution uses that exact request even if ADK rebuilds different
+conversation context on native resume. Review control events stay out of
+model history and conversation memory. User `after_model_callback` handlers
+receive model output after release. Application tool callbacks run for
+released tool calls and do not see the internal review carrier.
+Application `before_agent_callback` and `before_model_callback` handlers run
+for ordinary invocations and model calls, but are bypassed when continuing a
+bound review so they cannot substitute output or tools before the OE applies
+the review decision. Model-error callbacks cannot recover a policy denial or
+an unsupported durable-execution error; ordinary provider-error recovery
+remains supported.
+
+Configured transfers and parallel Workflow branches are supported. Output
+review inside repeated `parallel_worker` children is unsupported, matching
+the adapter's native long-running-wait restriction; a halt fails explicitly
+before a wait is published. `adk_framework` is reserved for ADK control and
+cannot be used as an application tool or emitted by the model.
+
 ## Workflow and agent paths
 
 ADK exposes `Workflow` composition and agent collaboration through different
@@ -244,7 +303,7 @@ uv add agent-engine-sdk-adk
 ### Requirements
 
 - Python >= 3.11
-- Google ADK >= 2.4.0, < 3
+- Google ADK >= 2.9.0, < 3
 - [uv](https://docs.astral.sh/uv/)
 
 ### Dev Setup
@@ -256,7 +315,7 @@ uv sync --extra dev
 ### Testing
 
 ```bash
-./scripts/test.sh agent-engine-sdk-adk
+./scripts/test.sh sdk-adk
 ```
 
 The repository-owned suite syncs the workspace package and runs Ruff, Pyright,

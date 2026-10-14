@@ -162,8 +162,14 @@ class Credential(_Model):
 
 
 class Auth(_Model):
-    type: Literal["none", "bearer", "api_key", "basic", "api_keys"] = Field(
-        default="none", description="Static auth presentation"
+    type: Literal["none", "bearer", "api_key", "basic", "api_keys", "oauth"] = Field(
+        default="none", description="Static auth presentation or request-local delegated OAuth"
+    )
+    provider_type: str | None = Field(
+        default=None, description="Project-scoped Broker provider key"
+    )
+    scopes: list[str] = Field(
+        default_factory=list, description="Connector-wide delegated permissions"
     )
     env: str | None = Field(default=None, description="Tenant secret environment reference")
     header: str | None = Field(default=None, description="API key header name")
@@ -189,12 +195,23 @@ class Auth(_Model):
             "api_key": {"type", "env", "header", "location", "name", "prefix", "headers"},
             "basic": {"type", "username_env", "password_env", "headers"},
             "api_keys": {"type", "credentials", "headers"},
+            "oauth": {"type", "provider_type", "scopes", "headers"},
         }[self.type]
         if configured - allowed:
             raise ValueError(f"{self.type} auth contains fields for another auth type")
 
         credential_headers: set[str] = set()
-        if self.type == "bearer":
+        if self.type == "oauth":
+            if not self.provider_type or any(
+                ord(character) <= 32 or ord(character) >= 127 for character in self.provider_type
+            ):
+                raise ValueError("OAuth auth requires an explicit provider key without whitespace")
+            if len(set(self.scopes)) != len(self.scopes) or any(
+                re.fullmatch(r"[!\x23-\x5B\x5D-\x7E]+", scope) is None for scope in self.scopes
+            ):
+                raise ValueError("OAuth scopes must be unique OAuth scope tokens")
+            credential_headers.add("authorization")
+        elif self.type == "bearer":
             if not _validate_secret_env(self.env):
                 raise ValueError("bearer auth requires one tenant secret env")
             credential_headers.add("authorization")
@@ -235,7 +252,7 @@ class Auth(_Model):
 
     def header_name(self) -> str | None:
         """Return the single generated auth header, when this auth shape has one."""
-        if self.type == "bearer":
+        if self.type in ("bearer", "oauth"):
             return "Authorization"
         if self.type == "api_key":
             if (self.location or "header") == "header":
@@ -244,7 +261,7 @@ class Auth(_Model):
 
     def header_names(self) -> set[str]:
         """List auth-controlled headers so model parameters cannot collide with them."""
-        if self.type in ("bearer", "basic"):
+        if self.type in ("bearer", "basic", "oauth"):
             names = {"authorization"}
         elif self.type == "api_key" and (header_name := self.header_name()):
             names = {header_name.lower()}

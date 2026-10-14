@@ -22,6 +22,7 @@ import {
   type InterruptResult,
   type StreamingResult,
 } from "../../src/index.js";
+import type { ExecutorCallbackRequest } from "../../src/models.js";
 import { CallbackDelivery } from "../../src/server/callback_delivery.js";
 
 afterEach(() => {
@@ -61,7 +62,7 @@ interface AerServerPrivates {
   }>;
   chunkSeq: Map<string, number>;
   ownerCallbackUrl: Map<string, string>;
-  pendingSessionFinish: Set<string>;
+  pendingSessionFinish: Map<string, ExecutorCallbackRequest>;
   callbackDelivery: CallbackDeliveryPrivates;
 }
 
@@ -76,7 +77,7 @@ function makeAerServer(): AerServerPrivates {
   server.reportCallback = vi.fn().mockResolvedValue(undefined);
   server.chunkSeq = new Map();
   server.ownerCallbackUrl = new Map();
-  server.pendingSessionFinish = new Set();
+  server.pendingSessionFinish = new Map();
   server.callbackDelivery =
     new CallbackDelivery() as unknown as CallbackDeliveryPrivates;
   return server;
@@ -167,12 +168,12 @@ function makeRouteServer(): AERServer {
         drain: ReturnType<typeof vi.fn>;
       } | null;
     };
-    pendingSessionFinish: Set<string>;
+    pendingSessionFinish: Map<string, ExecutorCallbackRequest>;
     callbackDelivery: CallbackDeliveryPrivates;
     handleExecute: ReturnType<typeof vi.fn>;
   };
   server.runtime = {};
-  server.pendingSessionFinish = new Set();
+  server.pendingSessionFinish = new Map();
   server.callbackDelivery =
     new CallbackDelivery() as unknown as CallbackDeliveryPrivates;
   return server;
@@ -206,9 +207,12 @@ describe("AER /execute route: post-response session finish", () => {
   test("pending finish: exactly one finish POST, ordered strictly after the response is flushed", async () => {
     const server = makeRouteServer() as unknown as AERServer & {
       handleExecute: ReturnType<typeof vi.fn>;
-      pendingSessionFinish: Set<string>;
+      pendingSessionFinish: Map<string, ExecutorCallbackRequest>;
     };
-    server.pendingSessionFinish.add("exec-6");
+    server.pendingSessionFinish.set("exec-6", {
+      execution_id: "exec-6",
+      status: "COMPLETED",
+    });
     const callLog: string[] = [];
     server.handleExecute = vi.fn(async () => {
       callLog.push("handleExecute");
@@ -245,55 +249,76 @@ describe("AER /execute route: post-response session finish", () => {
     expect(server.pendingSessionFinish.has("exec-6")).toBe(false);
   });
 
-  test("pending finish waits for retained terminal callback delivery", async () => {
-    const server = makeRouteServer() as unknown as AERServer & {
-      handleExecute: ReturnType<typeof vi.fn>;
-      pendingSessionFinish: Set<string>;
-      callbackDelivery: CallbackDeliveryPrivates;
-    };
-    const executionId = "exec-callback";
-    const key = JSON.stringify(["terminal", executionId]);
-    server.pendingSessionFinish.add(executionId);
-    server.callbackDelivery.pending.set(key, {
-      oeUrl: "http://oe",
-      callback: { execution_id: executionId, status: "COMPLETED" },
-    });
+  test.each([false, true])(
+    "pending finish waits for its retained callback (durable=%s)",
+    async (durable) => {
+      const server = makeRouteServer() as unknown as AERServer & {
+        handleExecute: ReturnType<typeof vi.fn>;
+        pendingSessionFinish: Map<string, ExecutorCallbackRequest>;
+        callbackDelivery: CallbackDeliveryPrivates;
+      };
+      const executionId = "exec-callback";
+      const origin = durable ? { attempt_id: "B", attempt_fence: 2 } : {};
+      const key = JSON.stringify(
+        durable ? ["terminal", executionId, "B", 2] : ["terminal", executionId],
+      );
+      const oldKey = JSON.stringify(["terminal", executionId, "A", 1]);
+      server.callbackDelivery.pending.set(oldKey, {
+        oeUrl: "http://oe",
+        callback: {
+          execution_id: executionId,
+          status: "ERROR",
+          attempt_id: "A",
+          attempt_fence: 1,
+        },
+      });
+      server.pendingSessionFinish.set(executionId, {
+        execution_id: executionId,
+        status: "COMPLETED",
+        ...origin,
+      });
+      server.callbackDelivery.pending.set(key, {
+        oeUrl: "http://oe",
+        callback: { execution_id: executionId, status: "COMPLETED", ...origin },
+      });
 
-    let settleCallback!: () => void;
-    server.callbackDelivery.tasks.set(
-      key,
-      new Promise<void>((resolve) => {
-        settleCallback = () => {
-          server.callbackDelivery.pending.delete(key);
-          resolve();
-        };
-      }),
-    );
-    server.handleExecute = vi
-      .fn()
-      .mockResolvedValue({ status: "completed", result: "ok" });
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(null, { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
+      let settleCallback!: () => void;
+      server.callbackDelivery.tasks.set(
+        key,
+        new Promise<void>((resolve) => {
+          settleCallback = () => {
+            server.callbackDelivery.pending.delete(key);
+            resolve();
+          };
+        }),
+      );
+      server.handleExecute = vi
+        .fn()
+        .mockResolvedValue({ status: "completed", result: "ok" });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(new Response(null, { status: 200 }));
+      vi.stubGlobal("fetch", fetchMock);
 
-    const app = Fastify();
-    server.registerRoutes(app);
-    const response = await app.inject({
-      method: "POST",
-      url: "/execute",
-      payload: executeRequest(executionId),
-    });
+      const app = Fastify();
+      server.registerRoutes(app);
+      const response = await app.inject({
+        method: "POST",
+        url: "/execute",
+        payload: executeRequest(executionId),
+      });
 
-    expect(response.statusCode).toBe(200);
-    expect(fetchMock).not.toHaveBeenCalled();
+      expect(response.statusCode).toBe(200);
+      expect(fetchMock).not.toHaveBeenCalled();
 
-    settleCallback();
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(fetchMock.mock.calls[0][0]).toContain(
-      `/executions/${executionId}/finish`,
-    );
-  });
+      settleCallback();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      expect(server.callbackDelivery.pending.has(oldKey)).toBe(true);
+      expect(fetchMock.mock.calls[0][0]).toContain(
+        `/executions/${executionId}/finish`,
+      );
+    },
+  );
 
   test("pending finish drains Memory before releasing the session", async () => {
     const server = makeRouteServer() as unknown as AERServer & {
@@ -304,10 +329,13 @@ describe("AER /execute route: post-response session finish", () => {
         };
       };
       handleExecute: ReturnType<typeof vi.fn>;
-      pendingSessionFinish: Set<string>;
+      pendingSessionFinish: Map<string, ExecutorCallbackRequest>;
     };
     const executionId = "exec-memory-drain";
-    server.pendingSessionFinish.add(executionId);
+    server.pendingSessionFinish.set(executionId, {
+      execution_id: executionId,
+      status: "COMPLETED",
+    });
     let finishDrain!: (drained: boolean) => void;
     const drain = vi.fn(
       () =>
@@ -352,10 +380,13 @@ describe("AER /execute route: post-response session finish", () => {
         };
       };
       handleExecute: ReturnType<typeof vi.fn>;
-      pendingSessionFinish: Set<string>;
+      pendingSessionFinish: Map<string, ExecutorCallbackRequest>;
     };
     const executionId = "exec-memory-drain-timeout";
-    server.pendingSessionFinish.add(executionId);
+    server.pendingSessionFinish.set(executionId, {
+      execution_id: executionId,
+      status: "COMPLETED",
+    });
     const drain = vi.fn().mockResolvedValue(false);
     server.runtime.memoryWriter = { pendingWrites: 1, drain };
     server.handleExecute = vi
@@ -385,9 +416,12 @@ describe("AER /execute route: post-response session finish", () => {
   test("a failing finish POST is swallowed: does not affect the already-sent response", async () => {
     const server = makeRouteServer() as unknown as AERServer & {
       handleExecute: ReturnType<typeof vi.fn>;
-      pendingSessionFinish: Set<string>;
+      pendingSessionFinish: Map<string, ExecutorCallbackRequest>;
     };
-    server.pendingSessionFinish.add("exec-7");
+    server.pendingSessionFinish.set("exec-7", {
+      execution_id: "exec-7",
+      status: "COMPLETED",
+    });
     server.handleExecute = vi
       .fn()
       .mockResolvedValue({ status: "completed", result: "ok" });

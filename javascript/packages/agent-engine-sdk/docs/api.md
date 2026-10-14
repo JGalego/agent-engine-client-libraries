@@ -58,6 +58,7 @@
   - [AgentInput](#api-agentinput)
   - [AgentOutput](#api-agentoutput)
   - [BaseAgent](#api-baseagent)
+    - [commitCancelledTurn()?](#api-commitcancelledturn)
     - [execute()](#api-execute)
   - [BaseExecutionCallback](#api-baseexecutioncallback)
     - [onNodeEnd()](#api-onnodeend-1)
@@ -1840,6 +1841,44 @@ Callers choose the execution mode:
 - `for await (const event of agent.execute(ctx, input))` for streaming (SSE-style)
 
 #### Methods
+
+<a id="api-commitcancelledturn"></a>
+
+##### commitCancelledTurn()?
+
+```ts
+optional commitCancelledTurn(ctx, input): Promise<
+  | {
+  checkpoint_id: string;
+  thread_id: string;
+}
+| null>;
+```
+
+Checkpoint the cancelled turn so session history can serve it.
+
+The AER calls this from the drain teardown of an execution-cancelled run.
+Optional: only framework adapters backed by a checkpoint store
+(LangGraph) implement it; others omit it and the call is skipped.
+Resolves with the committed checkpoint's coordinate — reported to OE so
+the branch-source selector can fork from the rescued marker — or null
+when nothing was committed.
+
+**Parameters**
+
+| Parameter | Type |
+| :------ | :------ |
+| `ctx` | [`RequestContext`](#api-requestcontext) |
+| `input` | [`AgentInput`](#api-agentinput) |
+
+**Returns**
+
+`Promise`\<
+  \| \{
+  `checkpoint_id`: `string`;
+  `thread_id`: `string`;
+\}
+  \| `null`\>
 
 <a id="api-execute"></a>
 

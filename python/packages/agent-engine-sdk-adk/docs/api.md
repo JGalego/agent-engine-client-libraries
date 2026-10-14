@@ -13,6 +13,7 @@
     * [run](#agent_engine_sdk_adk.runtime.App.run)
 * [agent\_engine\_sdk\_adk.agent](#agent_engine_sdk_adk.agent)
   * [ADKBaseAgent](#agent_engine_sdk_adk.agent.ADKBaseAgent)
+    * [cancelled\_history\_scope](#agent_engine_sdk_adk.agent.ADKBaseAgent.cancelled_history_scope)
 * [agent\_engine\_sdk\_adk.runner](#agent_engine_sdk_adk.runner)
   * [DurableADKRunner](#agent_engine_sdk_adk.runner.DurableADKRunner)
     * [rewind\_async](#agent_engine_sdk_adk.runner.DurableADKRunner.rewind_async)
@@ -132,6 +133,11 @@ apply native ADK HITL constructors to these returned callables:
 ``LongRunningFunctionTool(fn)``. Do not wrap the raw ``@app.tool``
 function; that has not gone through the secure wrapper yet.
 
+Tools discovered from ``agent.yaml`` ``mcp.servers`` entries are
+returned as ready-made ADK tools carrying the server's JSON schema;
+their calls also route through the secure wrapper, with the MCP
+identity OE forwards to the Tool Pod.
+
 <a id="agent_engine_sdk_adk.runtime.App.tool"></a>
 
 #### tool
@@ -221,6 +227,23 @@ class ADKBaseAgent(BaseAgent)
 ```
 
 Run one ADK 2 agent with OE as its only durable authority.
+
+<a id="agent_engine_sdk_adk.agent.ADKBaseAgent.cancelled_history_scope"></a>
+
+#### cancelled\_history\_scope
+
+```python
+@contextmanager
+def cancelled_history_scope(ctx: RequestContext,
+                            input: AgentInput) -> Generator[CancelledHistory]
+```
+
+Expose cancellation capture to the shared AER reporting lifecycle.
+
+The runner enters this scope before the durable attempt's work runs, so a
+Stop that tears the run down mid-turn can still retain the stopped
+transcript. The opener is the request message under the id the adapter
+seeds; ``normalized_input`` may replace it once the hook input is known.
 
 Public runner for Google ADK applications on MongoDB.
 

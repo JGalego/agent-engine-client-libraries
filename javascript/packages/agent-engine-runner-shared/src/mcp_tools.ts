@@ -46,6 +46,7 @@ export interface MCPToolBinding {
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
   readonly serverConfig: RuntimeMCPServerConfig;
+  readonly annotations?: Record<string, unknown>;
 }
 
 /** JSON/BSON-safe result returned by an MCP `tools/call` invocation. */
@@ -158,6 +159,35 @@ interface DiscoveredTool {
   name: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+}
+
+/**
+ * Return a JSON-safe copy of MCP `Tool.annotations`, or `undefined` when the
+ * value is missing or not a serializable plain object.
+ */
+export function normalizeMcpToolAnnotations(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(JSON.stringify(value));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return undefined;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -206,6 +236,9 @@ export async function discoverMcpTools(
         description: tool.description ?? "",
         inputSchema: tool.inputSchema,
         serverConfig,
+        ...(tool.annotations !== undefined && {
+          annotations: tool.annotations,
+        }),
       });
     }
   }
@@ -382,11 +415,15 @@ async function listServerTools(
     for (let page = 0; page < MAX_LIST_TOOL_PAGES; page++) {
       const result = await client.listTools({ cursor });
       tools.push(
-        ...result.tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema as Record<string, unknown>,
-        })),
+        ...result.tools.map((tool) => {
+          const annotations = normalizeMcpToolAnnotations(tool.annotations);
+          return {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema as Record<string, unknown>,
+            ...(annotations !== undefined && { annotations }),
+          };
+        }),
       );
       if (tools.length > MAX_TOOLS_PER_SERVER) {
         throw new MCPConfigError(

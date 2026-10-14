@@ -166,6 +166,7 @@
   * [register\_guardrail\_policy\_engine](#agent_engine_runner_shared.guardrails_evaluator.core.register_guardrail_policy_engine)
   * [evaluate\_guardrail\_check](#agent_engine_runner_shared.guardrails_evaluator.core.evaluate_guardrail_check)
 * [agent\_engine\_runner\_shared.secure\_llm\_proxy](#agent_engine_runner_shared.secure_llm_proxy)
+  * [GuardrailReviewPending](#agent_engine_runner_shared.secure_llm_proxy.GuardrailReviewPending)
   * [guardrail\_review\_wait\_id](#agent_engine_runner_shared.secure_llm_proxy.guardrail_review_wait_id)
   * [SecureLLMProxy](#agent_engine_runner_shared.secure_llm_proxy.SecureLLMProxy)
     * [step\_counter](#agent_engine_runner_shared.secure_llm_proxy.SecureLLMProxy.step_counter)
@@ -181,6 +182,7 @@
   * [raise\_for\_oe\_rejection](#agent_engine_runner_shared.secure_wrapper.raise_for_oe_rejection)
   * [ToolCallTimeoutError](#agent_engine_runner_shared.secure_wrapper.ToolCallTimeoutError)
   * [OperationalStepAllocator](#agent_engine_runner_shared.secure_wrapper.OperationalStepAllocator)
+    * [allocation\_count](#agent_engine_runner_shared.secure_wrapper.OperationalStepAllocator.allocation_count)
   * [ExternalAPICallError](#agent_engine_runner_shared.secure_wrapper.ExternalAPICallError)
   * [LLMInvocationError](#agent_engine_runner_shared.secure_wrapper.LLMInvocationError)
   * [request\_oe\_approval](#agent_engine_runner_shared.secure_wrapper.request_oe_approval)
@@ -2623,6 +2625,16 @@ The proxy packages intercepted invoke_llm requests for the Orchestration Engine
 and unwraps the streamed OE relay back into sdk-core models. The OE owns
 approval, routing, live SSE relay, and final audit/result recording.
 
+<a id="agent_engine_runner_shared.secure_llm_proxy.GuardrailReviewPending"></a>
+
+## GuardrailReviewPending
+
+```python
+class GuardrailReviewPending(Exception)
+```
+
+A recorded halt whose adapter emits its native wait after the LLM call.
+
 <a id="agent_engine_runner_shared.secure_llm_proxy.guardrail_review_wait_id"></a>
 
 #### guardrail\_review\_wait\_id
@@ -2691,11 +2703,14 @@ Collect streamed sdk-core chunks into a final sdk-core LLMResponse.
 #### stream
 
 ```python
-def stream(messages: list[Message],
-           step: int | None = None,
-           stop: list[str] | None = None,
-           options: LLMInvocationOptions | None = None,
-           activity_key: str | None = None) -> Iterator[LLMStreamChunk]
+def stream(
+    messages: list[Message],
+    step: int | None = None,
+    stop: list[str] | None = None,
+    options: LLMInvocationOptions | None = None,
+    activity_key: str | None = None,
+    pending_review: GuardrailReviewPending | None = None
+) -> Iterator[LLMStreamChunk]
 ```
 
 Stream invoke_llm chunks through OE approval and OE-owned SSE relay.
@@ -2817,6 +2832,16 @@ Process-local operational step_number mint for one AER execution.
 
 Shared by SecureToolWrapper and SecureLLMProxy so parallel tools and LLM
 calls cannot collide under a single AER. Not a multi-OE authority.
+
+<a id="agent_engine_runner_shared.secure_wrapper.OperationalStepAllocator.allocation_count"></a>
+
+#### allocation\_count
+
+```python
+def allocation_count() -> int
+```
+
+Count minted request slots independently of replayed step watermarks.
 
 <a id="agent_engine_runner_shared.secure_wrapper.ExternalAPICallError"></a>
 

@@ -19,6 +19,7 @@ from agent_engine_runner_shared.mcp_tools import (
     make_mcp_sdk_tool_name,
     make_sync_mcp_tool_callable,
     mcp_server_network_hosts,
+    normalize_mcp_tool_annotations,
     normalize_mcp_tool_result,
     resolve_configured_mcp_tool_binding,
     resolve_mcp_auth,
@@ -233,6 +234,151 @@ def test_discover_mcp_tools_filters_allowed_tools(monkeypatch):
 
     assert [binding.sdk_tool_name for binding in bindings] == ["github__search_issues"]
     assert bindings[0].tool_name == "search_issues"
+
+
+def test_normalize_mcp_tool_annotations_copies_json_safe_object():
+    annotations = {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+        "title": "Search",
+    }
+    assert normalize_mcp_tool_annotations(annotations) == annotations
+
+
+def test_normalize_mcp_tool_annotations_omits_missing_and_malformed():
+    assert normalize_mcp_tool_annotations(None) is None
+    assert normalize_mcp_tool_annotations("read-only") is None
+    assert normalize_mcp_tool_annotations(["readOnlyHint"]) is None
+    assert normalize_mcp_tool_annotations(True) is None
+    circular: dict[str, object] = {}
+    circular["self"] = circular
+    assert normalize_mcp_tool_annotations(circular) is None
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_normalize_mcp_tool_annotations_omits_non_finite_numbers(value):
+    assert normalize_mcp_tool_annotations({"value": value}) is None
+
+
+def test_normalize_mcp_tool_annotations_dumps_pydantic_exclude_unset():
+    from pydantic import BaseModel
+
+    class _FakeAnnotations(BaseModel):
+        readOnlyHint: bool = False
+        destructiveHint: bool = True
+        title: str | None = None
+
+    assert normalize_mcp_tool_annotations(_FakeAnnotations()) == {}
+    assert normalize_mcp_tool_annotations(_FakeAnnotations(readOnlyHint=True)) == {
+        "readOnlyHint": True
+    }
+
+
+def test_discover_mcp_tools_preserves_annotations(monkeypatch):
+    async def fake_list_server_tools(server_name, config):
+        return [
+            SimpleNamespace(
+                name="search_issues",
+                description="Search issues",
+                inputSchema={"type": "object", "properties": {}},
+                annotations={
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "idempotentHint": True,
+                    "openWorldHint": False,
+                    "title": "Search issues",
+                },
+            ),
+            SimpleNamespace(
+                name="create_issue",
+                description="Create issue",
+                inputSchema={"type": "object", "properties": {}},
+                annotations={"readOnlyHint": False, "destructiveHint": False},
+            ),
+            SimpleNamespace(
+                name="delete_issue",
+                description="Delete issue",
+                inputSchema={"type": "object", "properties": {}},
+                annotations={"readOnlyHint": False, "destructiveHint": True},
+            ),
+            SimpleNamespace(
+                name="unannotated",
+                description="No hints",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            SimpleNamespace(
+                name="malformed",
+                description="Bad hints",
+                inputSchema={"type": "object", "properties": {}},
+                annotations="not-an-object",
+            ),
+        ]
+
+    monkeypatch.setattr(mcp_tools, "_list_server_tools", fake_list_server_tools)
+    config = RuntimeMCPConfig.model_validate(
+        {
+            "servers": {
+                "github": {
+                    "url": "https://api.githubcopilot.com/mcp/",
+                }
+            }
+        }
+    )
+
+    bindings = {binding.tool_name: binding for binding in discover_mcp_tools(config)}
+    assert bindings["search_issues"].annotations == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+        "title": "Search issues",
+    }
+    assert bindings["create_issue"].annotations == {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+    }
+    assert bindings["delete_issue"].annotations == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+    }
+    assert bindings["unannotated"].annotations is None
+    assert bindings["malformed"].annotations is None
+
+
+def test_discover_mcp_tools_keeps_annotations_after_allowed_tools_filter(monkeypatch):
+    async def fake_list_server_tools(server_name, config):
+        return [
+            SimpleNamespace(
+                name="search_issues",
+                description="Search issues",
+                inputSchema={"type": "object", "properties": {}},
+                annotations={"readOnlyHint": True},
+            ),
+            SimpleNamespace(
+                name="create_issue",
+                description="Create issue",
+                inputSchema={"type": "object", "properties": {}},
+                annotations={"destructiveHint": False},
+            ),
+        ]
+
+    monkeypatch.setattr(mcp_tools, "_list_server_tools", fake_list_server_tools)
+    config = RuntimeMCPConfig.model_validate(
+        {
+            "servers": {
+                "github": {
+                    "url": "https://api.githubcopilot.com/mcp/",
+                    "allowed_tools": ["search_issues"],
+                }
+            }
+        }
+    )
+
+    bindings = discover_mcp_tools(config)
+    assert [binding.tool_name for binding in bindings] == ["search_issues"]
+    assert bindings[0].annotations == {"readOnlyHint": True}
 
 
 def test_discover_mcp_tools_rejects_active_event_loop(monkeypatch):

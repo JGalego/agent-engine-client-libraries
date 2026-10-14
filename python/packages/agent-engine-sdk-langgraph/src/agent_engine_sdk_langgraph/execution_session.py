@@ -15,10 +15,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, TypedDict
+from uuid import uuid4
 
-from langchain_core.messages import HumanMessage
-from langchain_core.runnables import RunnableConfig
-from langgraph.types import Command, Durability, Interrupt
+from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import AttemptContext
+from agent_engine_runner_shared.workflow import (
+    current_attempt_context,
+    operation_path_resolver_scope,
+)
 from agent_engine_sdk import (
     AgentInput,
     AgentOutput,
@@ -26,11 +29,9 @@ from agent_engine_sdk import (
     RequestContext,
     StreamEvent,
 )
-from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import AttemptContext
-from agent_engine_runner_shared.workflow import (
-    current_attempt_context,
-    operation_path_resolver_scope,
-)
+from langchain_core.messages import BaseMessage, HumanMessage, convert_to_messages
+from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command, Durability, Interrupt, Overwrite
 
 from agent_engine_sdk_langgraph.checkpoint_branch import (
     LangGraphCheckpoint,
@@ -39,9 +40,9 @@ from agent_engine_sdk_langgraph.checkpoint_branch import (
     normalize_checkpoint_id,
     pending_interrupts_from_state,
 )
+from agent_engine_sdk_langgraph.durable_errors import UnsupportedDurableGraphError
 from agent_engine_sdk_langgraph.durable_subgraphs import DurableSubgraphResolver
 from agent_engine_sdk_langgraph.hooks import PrepareAgentInput, ResolveThreadId
-from agent_engine_sdk_langgraph.durable_errors import UnsupportedDurableGraphError
 from agent_engine_sdk_langgraph.platform_checkpointer import (
     PlatformCheckpointer,
     prune_cancelled_predecessor_writes,
@@ -58,6 +59,44 @@ __all__ = ["ExecutionSession", "NativeSession", "execution_session"]
 
 class DurableCheckpointKwargs(TypedDict, total=False):
     durability: Durability
+
+
+def _convert_hook_message_likes(graph_input: Any) -> Any:
+    """Convert supported message-like hook returns to real messages at build.
+
+    A ``prepare_input`` hook may return tuples, role dicts, or bare strings;
+    LangGraph would coerce them at reducer time with a reducer-minted id the
+    cancelled-turn capture could never know. Converting here makes the opener
+    a real ``BaseMessage`` — the native capture assigns and records its id
+    before the graph runs. Existing ids are preserved by the conversion; no
+    ids are minted here (native capture assigns ``input:`` ids, durable
+    mints replay-stable ids per attempt). An ``Overwrite`` wrapper — instance
+    or serialized ``__overwrite__`` dict — is preserved as replacement
+    semantics. Parallels durable_session.assign_stable_execution_message_ids,
+    which also mints.
+    """
+    if not isinstance(graph_input, dict):
+        return graph_input
+    raw = graph_input.get("messages")
+    if raw is None:
+        return graph_input
+    if isinstance(raw, dict) and "__overwrite__" in raw:
+        # Serialized wrapper (crossed a serialization boundary): same
+        # replacement semantics — unwrap, convert, rewrap in the canonical
+        # Overwrite form.
+        raw = Overwrite(raw["__overwrite__"])
+    overwrite = isinstance(raw, Overwrite)
+    value = raw.value if overwrite else raw
+    if not isinstance(value, list):
+        if isinstance(value, (BaseMessage, str, tuple, dict)):
+            value = [value]
+        else:
+            return graph_input  # exotic message source: the reducer handles it
+    messages = convert_to_messages(value)
+    return {
+        **graph_input,
+        "messages": Overwrite(messages) if overwrite else messages,
+    }
 
 
 class ExecutionSession(ABC):
@@ -117,20 +156,22 @@ class ExecutionSession(ABC):
 
     def _fresh_graph_input(self, ctx: RequestContext, input: AgentInput) -> Any:
         if self.prepare_input is not None:
-            return self.prepare_input(input, ctx)
+            return _convert_hook_message_likes(self.prepare_input(input, ctx))
         if not isinstance(input.payload, dict):
             raise TypeError(f"Expected dict payload, got {type(input.payload)}")
         input_payload: dict[str, Any] = input.payload
         message = str(input_payload.get("message", ""))
         # Durable default identity is unindexed ``durable-input:{execution_id}``.
         # Hook-built lists use indexed ids in ``assign_stable_execution_message_ids``.
+        # Native turns also get the id here: the cancelled-turn commit finds the
+        # turn-opening message by this captured id, not by prompt text.
         human_message = (
             HumanMessage(
                 content=message,
                 id=f"durable-input:{self.attempt.workflow_identity.execution_id}",
             )
             if self.attempt is not None
-            else HumanMessage(content=message)
+            else HumanMessage(content=message, id=f"input:{uuid4()}")
         )
         graph_input: dict[str, Any] = {
             "messages": [human_message],
@@ -187,6 +228,12 @@ class ExecutionSession(ABC):
     def release_scratch(self) -> None:
         """Release attempt-local checkpoints; native sessions have none."""
         if self.attempt is None:
+            return
+        from agent_engine_runner_shared.workflow import current_cancelled_history
+
+        history = current_cancelled_history.get()
+        if history is not None and history.matches(self.attempt):
+            # AER owns cleanup until its bounded cancellation report finishes.
             return
         checkpointer = getattr(self.graph, "checkpointer", None)
         if isinstance(checkpointer, PlatformCheckpointer):

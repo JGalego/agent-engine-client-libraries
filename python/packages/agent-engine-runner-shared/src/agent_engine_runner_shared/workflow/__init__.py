@@ -23,8 +23,13 @@ from agent_engine_runner_shared.workflow.attempt import (
     finalize_current_step_command,
     finalize_current_step_suspensions_command,
 )
+from agent_engine_runner_shared.workflow.cancelled_history import (
+    CancelledHistory,
+    current_cancelled_history,
+)
 from agent_engine_runner_shared.workflow.client import (
     AsyncWorkflowClient,
+    FinalizedStepEntries,
     WorkflowClient,
     WorkflowClientError,
 )
@@ -50,10 +55,12 @@ from agent_engine_runner_shared.workflow.settlement import (
 
 __all__ = [
     "AsyncWorkflowClient",
+    "CancelledHistory",
     "ChildOperationBoundary",
     "DurableActivityDeniedError",
     "DurableActivityInterrupted",
     "DurableActivitySuspended",
+    "FinalizedStepEntries",
     "OperationPathResolver",
     "ReplayedActivityFailedError",
     "UnsupportedChildOperationFanOutError",
@@ -66,6 +73,7 @@ __all__ = [
     "child_operation_boundary_scope",
     "complete_execution_command",
     "current_attempt_context",
+    "current_cancelled_history",
     "current_operation_path",
     "finalize_current_step_command",
     "finalize_current_step_suspensions_command",

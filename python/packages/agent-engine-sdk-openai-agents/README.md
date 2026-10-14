@@ -4,8 +4,9 @@
 
 OpenAI Agents SDK adapter for the MongoDB Atlas Agent Engine SDK.
 
-> **Status:** under construction. `framework: openai-agents` is not yet
-> accepted by the CLI or the build service.
+> **Status:** under construction. The CLI and the build service accept
+> `framework: openai-agents`; a platform build needs an environment that
+> publishes the Python Lite runner base.
 
 The adapter runs a native OpenAI Agents `Agent` through the SDK's own
 `Runner` while the Orchestration Engine owns durable execution. The adapter
@@ -62,8 +63,55 @@ the model in the order the model made the calls, whichever finishes first. If
 one of them waits for approval, the calls that ran before the wait keep their
 outputs ahead of the approved call's, as the SDK records them. When one call
 fails, the turn fails once the calls still running beside it have finished.
-MCP servers, guardrails, agent hooks, hosted prompts, dynamic instructions,
-and a custom `tool_use_behavior` are not supported yet.
+Agent hooks, hosted prompts, dynamic instructions, and a custom
+`tool_use_behavior` are not supported yet. An agent's own input and output
+guardrails run as described under
+[Input and output guardrails](#input-and-output-guardrails). A project's
+guardrail policies apply to every model and tool call; see
+[Guardrail policies](#guardrail-policies).
+
+## MCP tools
+
+List a remote MCP server under `mcp.servers` in `agent.yaml`, with the same
+keys every Agent Engine framework uses. Its tools are discovered when the
+agent starts and `app.tools()` returns them beside the registered functions,
+named `<server>__<tool>`:
+
+```yaml
+mcp:
+  servers:
+    atlas:
+      url: https://mcp.example.com/mcp
+      allowed_tools: [find]
+      auth:
+        type: bearer_env
+        token_env: ATLAS_MCP_TOKEN
+```
+
+`auth` names the environment variable that holds the token; the token itself
+belongs in the workspace's secrets, or in `.env` for local development.
+
+A call to one of these tools is an Orchestration Engine tool activity like any
+other and runs in the Tool Pod, which holds the server's credentials and
+network access. `allowed_tools` limits which of the server's tools the agent
+gets. A failed call or an MCP error result fails the turn. So does a
+structured result holding an integer at or beyond 2**53, which a durable
+record cannot keep exactly; have the server return such a value as a string.
+
+A server that cannot be reached when the agent starts stops it from starting;
+`timeout_seconds` bounds each request of that discovery, as it bounds a call.
+
+Only the agent runtime lists the server's tools, when it starts; the Tool Pod
+finds the server for a call from `agent.yaml` when the call arrives. The Tool
+Pod also runs the entrypoint, to register the agent's models, and there
+`app.tools()` returns the registered functions only. Pass MCP tools to an
+agent without looking them up by name, for example
+`[tool for tool in app.tools() if tool.name.startswith("atlas__")]`, so the
+entrypoint builds in both.
+
+The SDK's own `Agent.mcp_servers` is refused: the SDK would call the server
+from the agent's process, outside the Tool Pod. `needs_approval` on an MCP
+tool is not supported yet.
 
 ## Handoffs
 
@@ -102,6 +150,14 @@ between `subagent_start` and `subagent_end` events, tagged with the tool name
 and the call id, apart from the calling agent's reply. A nested run that fails
 fails the turn.
 
+A tool a nested agent uses can need approval, and so can the agent tool
+itself. The turn suspends as for any other approval, and the wait is recorded
+under the nested agent's path. In one turn, waits from the calling agent and
+from nested agents are answered together. Tool call ids must be unique within
+a turn. A nested agent that stops for an approval sends no `subagent_end`; the
+resumed stream opens it again with `subagent_start` before the rest of its
+text, and does not send again the text the caller saw before the wait.
+
 `max_turns`, `custom_output_extractor`, and structured input are supported. A
 replacement attempt calls the extractor and a structured input's
 `input_builder` again, so both must return the same value for the same input
@@ -110,10 +166,9 @@ from the recorded one.
 
 An `on_stream` callback, `hooks`, a `run_config`, a `session`, provider
 continuation ids, a callable `needs_approval` or `is_enabled`, tool guardrails,
-a native `timeout_seconds`, and an agent that can reach itself through its own
-agent tool fail the turn before any model or tool work. So does a tool that
-needs approval anywhere a nested agent can reach, which is not supported yet;
-approvals in the calling agent work as usual.
+input or output guardrails on the nested agent or an agent it hands off to, a
+native `timeout_seconds`, and an agent that can reach itself through its own
+agent tool fail the turn before any model or tool work.
 
 ## Approvals
 
@@ -148,6 +203,123 @@ restart while waiting loses nothing. A resume that leaves any interrupt
 unanswered is refused; `needs_approval` must be `True` or `False`, not a
 callable.
 
+## Input and output guardrails
+
+Declare guardrails on an agent as the SDK documents, with `input_guardrails`
+and `output_guardrails`:
+
+```python
+from agents import Agent, GuardrailFunctionOutput, Runner, input_guardrail
+
+
+@app.entrypoint
+def build() -> Agent:
+    judge = Agent(
+        name="topic judge",
+        instructions="Answer yes if the message is about an order, else no.",
+        model=app.llm("gpt-4.1-mini", llm_id="judge"),
+    )
+
+    @input_guardrail
+    async def on_topic(context, agent, input) -> GuardrailFunctionOutput:
+        verdict = await Runner.run(judge, input, context=context.context)
+        return GuardrailFunctionOutput(
+            output_info=None,
+            tripwire_triggered=verdict.final_output.strip().lower() != "yes",
+        )
+
+    return Agent(
+        name="support",
+        model=app.llm("gpt-4.1"),
+        tools=app.tools(),
+        input_guardrails=[on_topic],
+    )
+```
+
+A guardrail that trips fails the turn as a policy denial: the execution ends
+with `error_code` `policy_denied` and the platform's own message for that
+class. The denial's reason names the guardrail and leaves out its
+`output_info`; it is in the runtime's log and in the metadata of the live
+stream's error event, not in the stored execution. The turn commits nothing,
+so the conversation continues from the turn before it. Tools the turn already
+ran are not undone.
+
+Because the denial names the guardrail, every guardrail needs a name. One
+declared with `@input_guardrail` or `@output_guardrail`, or built from a
+function, takes the function's; one built from a `functools.partial` or a
+callable object has none, so pass `name=`. A guardrail without a name is
+refused before any model call.
+
+Three things differ from the SDK's own Runner:
+
+- **Input guardrails finish before the first model call.** The SDK's default,
+  `run_in_parallel=True`, starts them beside the model call, which is then
+  made, and paid for, whether or not a guardrail trips. Here
+  `run_in_parallel` has no effect.
+- **An agent's guardrails run one at a time, in the order the agent lists
+  them**, and the ones after a trip do not run. The SDK starts them together.
+- **An agent with output guardrails does not stream its text.** The SDK
+  streams an answer before the output guardrails see it and withholds only the
+  run's final value. Here the caller receives the answer whole, in the turn's
+  result, once the guardrails pass. Agents without output guardrails stream as
+  before.
+
+As in the SDK, input guardrails belong to the agent that starts the turn and
+check the conversation so far with the new message; output guardrails belong to
+the agent that gives the turn's final answer. After a handoff the agent handed
+to starts the following turns, so its input guardrails check those.
+
+A replacement attempt runs the turn again from its start, guardrails included,
+and a turn that waits for an approval runs them again when it resumes. A
+guardrail must therefore return the same verdict for the same input and change
+nothing outside the process. A guardrail that asks a model does so through an
+agent whose model comes from `app.llm(...)`, called while the entrypoint
+builds the app, as `judge` is above: the judge's model call is then an
+Orchestration Engine activity under the project's policies, and a replay
+returns its recorded response instead of asking again. The run needs
+`context=context.context`, which carries the turn. A judge with a plain model
+name has no provider credentials in the runtime and fails the turn. Tools,
+approvals, and handoffs in a judge agent are not qualified. A project policy
+that holds a judge's response for review fails the turn: only an agent of the
+app's graph can wait for a reviewer. A guardrail that
+calls an outside service directly is not supported: the call would be made
+again on every replay, outside the platform's network policy.
+
+Tool guardrails, and guardrails on an agent used as a tool, are not supported
+yet.
+
+## Guardrail policies
+
+A project's guardrail policies are enforced by the Orchestration Engine on
+every model and tool call of the turn, including those of an agent used as a
+tool, and need no application code. A policy that logs, redacts, or blocks
+changes only what the call returns.
+
+A policy that requires review of a model response suspends the turn as an
+approval does: the response is withheld, and the invocation returns
+`status: suspended` with an interrupt whose value names the review under
+`guardrail_review`. It waits beside any tool approval of the same turn, and
+one `resume_map` answers them together:
+
+```json
+{"resume_map": {"<interrupt id>": {"decision": "approve", "reviewer_notes": "checked"}}}
+```
+
+Approving releases the held response, tool calls included, without another
+provider call. Denying fails the turn and releases nothing. The Orchestration
+Engine holds the response and records the decision; the adapter never sees the
+held text before it is approved.
+
+To stop the Runner the adapter gives every agent a tool named
+`agent_engine_guardrail_review`, which no model is offered. The stop is not
+conversation content, so neither a later model call nor the committed history
+carries it. The Runner's own result for a run still lists it, so a
+`custom_output_extractor` of an agent used as a tool sees the call and its
+empty output among that run's items when a response of that agent was
+reviewed; they name the review, never the held response. Each review takes one
+of the run's `max_turns`. A tool or handoff
+with that name, or a model response that calls it, fails the turn.
+
 ## Durable state
 
 Each committed turn stores the Runner's complete input list under the
@@ -157,11 +329,39 @@ turn continues from that list with that agent. Committed
 messages are an explicit-field projection for history readers; they are not
 read back.
 
+A reader of Orchestration Engine history sees that projection: user and
+assistant messages, each tool call, and each output. A handoff and a call to an
+agent used as a tool appear as ordinary calls with their outputs. A nested
+agent's own conversation is not committed, so it is not in history; its model
+and tool calls are in the execution's activity records.
+
 Supported items are text messages, function calls, and text function outputs.
 The calls one model response made come together, followed by exactly one
 output per call before anything else. Any other item, any state that belongs
 to a different app or session, and an active agent the app no longer has fail
 the turn before new model or tool work starts.
+
+## Sessions and branches
+
+The Orchestration Engine's committed state is the only conversation store. The
+adapter makes the `Runner` call itself with that state as input, so SDK
+`Session` objects are not used, and provider-hosted continuation
+(`previous_response_id`, a conversation id, or a hosted prompt, whether passed
+to the Runner, to `Agent.as_tool`, or in a registered model's `extra_body` or
+`extra_args`) fails before any model work.
+
+A branch is a new session that starts from another session's committed state.
+Its first turn continues with the source's conversation and active agent,
+commits under its own session, and shares nothing with the source afterwards;
+approvals work in it as in any turn. A conversation can be branched at the end
+of a completed turn, because the adapter commits once per turn. The platform
+branches only from a committed step, so a turn waiting for an approval offers
+nothing to branch from until it completes.
+
+Creating a branch is a platform operation, not an SDK one. The adapter adds no
+branching API, and the SDK's own session branching
+(`AdvancedSQLiteSession.create_branch_from_turn`) is not available, so an app
+cannot branch its own conversation; the platform's branch API does.
 
 ## Model calls
 

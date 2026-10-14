@@ -54,14 +54,21 @@ network:
   egress:
     - fqdn: generativelanguage.googleapis.com
       ports: [443]
-    # The dev liveness fixture (Canary Testing) is Atlas-linked to a cloud-dev
-    # project whose clusters are reaped, so its database is a cloud.mongodb.com
-    # Flex cluster outside the link. atlas_clusters cannot allowlist that SRV
-    # name there, so the fixture's MONGODB_URI is a non-SRV mongodb:// string
-    # naming these shard hosts, which plain egress rules can allow.
+    # The dev and qa liveness fixtures (Canary Testing) are Atlas-linked to
+    # cloud-dev / qa projects whose clusters are reaped, so each database is a
+    # cloud.mongodb.com Flex cluster outside the link. atlas_clusters cannot
+    # allowlist that SRV name there, so each fixture's MONGODB_URI is a non-SRV
+    # mongodb:// string naming its shard hosts, which plain egress rules can
+    # allow. The first three hosts are dev's cluster, the last three qa's.
     - fqdn: ac-koeesec-shard-00-00.fvkjnyf.mongodb.net
       ports: [27017]
     - fqdn: ac-koeesec-shard-00-01.fvkjnyf.mongodb.net
       ports: [27017]
     - fqdn: ac-koeesec-shard-00-02.fvkjnyf.mongodb.net
+      ports: [27017]
+    - fqdn: ac-bkbtbxx-shard-00-00.14aah62.mongodb.net
+      ports: [27017]
+    - fqdn: ac-bkbtbxx-shard-00-01.14aah62.mongodb.net
+      ports: [27017]
+    - fqdn: ac-bkbtbxx-shard-00-02.14aah62.mongodb.net
       ports: [27017]

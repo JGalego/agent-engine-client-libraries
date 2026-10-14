@@ -9,7 +9,83 @@ import pytest
 
 from agent_engine_runner_shared.connectors import ConnectorExecutor, ToolDefinitions, load_tool_defs
 from agent_engine_runner_shared.connectors.definitions import Auth
+from agent_engine_runner_shared.models import ToolAuthorization
 from agent_engine_runner_shared.tool_api_error import classify_tool_api_error
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"provider_type": ""},
+        {"provider_type": "github\n"},
+        {"scopes": ["repo read"]},
+        {"scopes": [""]},
+        {"scopes": ["repo", "repo"]},
+        {"env": "SHARED_TOKEN"},
+        {"username_env": "USER"},
+        {"headers": {"Authorization": "override"}},
+    ],
+)
+def test_oauth_rejects_invalid_or_static_binding(binding):
+    """Reject ambiguous provider/scopes and static credential fallback at load time."""
+    with pytest.raises(ValueError):
+        Auth.model_validate(
+            {"type": "oauth", "provider_type": "github", "scopes": ["repo"], **binding}
+        )
+
+
+def test_oauth_delivers_only_the_explicit_request_token(document):
+    """A reused executor must not remember tokens or use a tenant bearer fallback."""
+    document["auth"] = {"type": "oauth", "provider_type": "github", "scopes": ["repo"]}
+    observed = []
+    with ConnectorExecutor(
+        ToolDefinitions.model_validate(document),
+        transport=httpx.MockTransport(
+            lambda request: (
+                observed.append(request.headers["authorization"]) or httpx.Response(200, text="ok")
+            )
+        ),
+    ) as executor:
+        for token in ("alice-token", "bob-token", "alice-token"):
+            assert (
+                executor.execute(
+                    "jiradc_getComments",
+                    {"issueIdOrKey": "DEMO-1"},
+                    env={"JIRA_TOKEN": "shared-token"},
+                    authorization=ToolAuthorization(token=token),
+                )
+                == "ok"
+            )
+        for token in (None, "", "with space", "injection\r\nheader", "nonascii-é"):
+            authorization = ToolAuthorization(token=token) if token is not None else None
+            with pytest.raises(ValueError, match="delegated connector token is missing or invalid"):
+                executor.execute(
+                    "jiradc_getComments",
+                    {"issueIdOrKey": "DEMO-1"},
+                    env={"JIRA_TOKEN": "shared-token"},
+                    authorization=authorization,
+                )
+    assert observed == ["Bearer alice-token", "Bearer bob-token", "Bearer alice-token"]
+
+
+def test_static_auth_ignores_delegated_token(document):
+    """Request context must not replace an explicitly configured static credential."""
+    observed = []
+    with ConnectorExecutor(
+        ToolDefinitions.model_validate(document),
+        transport=httpx.MockTransport(
+            lambda request: (
+                observed.append(request.headers["authorization"]) or httpx.Response(200, text="ok")
+            )
+        ),
+    ) as executor:
+        executor.execute(
+            "jiradc_getComments",
+            {"issueIdOrKey": "DEMO-1"},
+            env={"JIRA_TOKEN": "static-token"},
+            authorization=ToolAuthorization(token="delegated-token"),
+        )
+    assert observed == ["Bearer static-token"]
 
 
 @pytest.fixture
@@ -108,6 +184,7 @@ def test_jira_read_write_and_roundtrip(document, tmp_path):
     ],
 )
 def test_api_key_locations(document, location, source, expected_url, expected_header):
+    """Use the configured static key placement even when delegated context is present."""
     document["source"]["base_url"] = source
     document["auth"] = Auth(
         type="api_key",
@@ -124,7 +201,10 @@ def test_api_key_locations(document, location, source, expected_url, expected_he
     ) as executor:
         assert (
             executor.execute(
-                "jiradc_getComments", {"issueIdOrKey": "DEMO-1"}, env={"SERVICE_KEY": "secret"}
+                "jiradc_getComments",
+                {"issueIdOrKey": "DEMO-1"},
+                env={"SERVICE_KEY": "secret"},
+                authorization=ToolAuthorization(token="delegated-token"),
             )
             == "ok"
         )
@@ -134,6 +214,7 @@ def test_api_key_locations(document, location, source, expected_url, expected_he
 
 
 def test_basic_and_compound_credentials(document):
+    """Static Basic and compound keys keep their own secrets and constant headers."""
     requests = []
     document["auth"] = {
         "type": "basic",
@@ -151,6 +232,7 @@ def test_basic_and_compound_credentials(document):
             "jiradc_getComments",
             {"issueIdOrKey": "DEMO-1"},
             env={"SERVICE_USER": "user", "SERVICE_PASS": "pass"},
+            authorization=ToolAuthorization(token="delegated-token"),
         )
     assert requests[-1].headers["authorization"] == "Basic dXNlcjpwYXNz"
     assert requests[-1].headers["api-version"] == "2026-01-01"
@@ -173,6 +255,7 @@ def test_basic_and_compound_credentials(document):
             "jiradc_getComments",
             {"issueIdOrKey": "DEMO-1"},
             env={"CLIENT_ID": "id", "CLIENT_SECRET": "secret"},
+            authorization=ToolAuthorization(token="delegated-token"),
         )
     assert requests[-1].headers["x-client-id"] == "id"
     assert requests[-1].headers["x-client-secret"] == "secret"

@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
+from agent_engine_sdk.models import SessionsSummaryResponse
 from langchain_core.messages import (
     AIMessage,
     FunctionMessage,
@@ -32,7 +33,6 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from agent_engine_sdk.models import SessionsSummaryResponse
 
 from agent_engine_sdk_langgraph.query import LangGraphQueryPlugin
 
@@ -95,14 +95,24 @@ class _StubCollection:
 class _CheckpointTuple:
     """Minimal stand-in for langgraph.checkpoint.base.CheckpointTuple.
 
-    Carries only the ``checkpoint`` field — that's the only one the plugin
-    looks at. The real CheckpointTuple is a NamedTuple with more fields
-    (config, metadata, parent_config, pending_writes); none of them matter
-    for our read path.
+    ``checkpoint`` is the only field most of the read path looks at;
+    ``config``/``metadata`` ride along for tests that shape them. The
+    real CheckpointTuple is a NamedTuple with more fields (parent_config,
+    pending_writes); none of them matter for our read path.
     """
 
-    def __init__(self, checkpoint: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        checkpoint: dict[str, Any],
+        *,
+        config: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         self.checkpoint = checkpoint
+        self.config = (
+            config if config is not None else {"configurable": {"checkpoint_ns": ""}}
+        )
+        self.metadata = metadata if metadata is not None else {}
 
 
 class _StubSaver:
@@ -520,6 +530,140 @@ async def test_get_messages_for_session_preserves_message_additional_kwargs() ->
     }
 
 
+# ---------------------------------------------------------------------------
+# Cancelled-turn stamps
+#
+# The write path stamps the turn-opening message's own additional_kwargs with
+# ``cancelled_turn`` (see cancelled_turn.py). The reader never scans for
+# marker checkpoints: the stamp flows through the standard kwargs passthrough,
+# so it survives exactly as long as the message itself — independent of the
+# bounded checkpoint window.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_stamped_user_message_carries_cancelled_turn_kwarg() -> None:
+    saver = _StubSaver()
+    saver.set_alist_result(
+        [
+            {
+                "ts": _iso(0),
+                "channel_values": {
+                    "messages": [
+                        HumanMessage(content="first", id="h1"),
+                        AIMessage(content="first reply", id="a1"),
+                        HumanMessage(
+                            content="stop this",
+                            id="h2",
+                            additional_kwargs={"cancelled_turn": True},
+                        ),
+                    ]
+                },
+            }
+        ]
+    )
+
+    plugin = LangGraphQueryPlugin(saver)  # type: ignore[arg-type]
+    result = await plugin.get_messages_for_session("s1")
+
+    assert [m.additional_kwargs for m in result.messages] == [
+        None,
+        None,
+        {"cancelled_turn": True},
+    ]
+
+
+@pytest.mark.anyio
+async def test_stamp_survives_beyond_the_checkpoint_window() -> None:
+    """Only the tip is in the read window and no marker checkpoint is anywhere
+    in reach — the stamp lives on the message, so an old cancelled turn keeps
+    its status while its message is still served."""
+    saver = _StubSaver()
+    saver.set_alist_result(
+        [
+            {
+                "ts": _iso(3),
+                "channel_values": {
+                    "messages": [
+                        HumanMessage(content="first", id="h1"),
+                        AIMessage(content="first reply", id="a1"),
+                        HumanMessage(
+                            content="stop this",
+                            id="h2",
+                            additional_kwargs={"cancelled_turn": True},
+                        ),
+                        HumanMessage(content="try again", id="h3"),
+                        AIMessage(content="ok this time", id="a3"),
+                    ]
+                },
+            }
+        ]
+    )
+
+    plugin = LangGraphQueryPlugin(saver)  # type: ignore[arg-type]
+    result = await plugin.get_messages_for_session("s1")
+
+    assert [m.additional_kwargs for m in result.messages] == [
+        None,
+        None,
+        {"cancelled_turn": True},
+        None,
+        None,
+    ]
+
+
+@pytest.mark.anyio
+async def test_stamp_on_non_user_message_passes_through_untranslated() -> None:
+    """The reader passes kwargs through verbatim; the user-role gating lives
+    in the UI normalizer. A non-user message carrying the kwarg is served
+    as-is."""
+    saver = _StubSaver()
+    saver.set_alist_result(
+        [
+            {
+                "ts": _iso(0),
+                "channel_values": {
+                    "messages": [
+                        HumanMessage(content="first", id="h1"),
+                        AIMessage(
+                            content="reply",
+                            id="a1",
+                            additional_kwargs={"cancelled_turn": True},
+                        ),
+                    ]
+                },
+            }
+        ]
+    )
+
+    plugin = LangGraphQueryPlugin(saver)  # type: ignore[arg-type]
+    result = await plugin.get_messages_for_session("s1")
+
+    assert [m.additional_kwargs for m in result.messages] == [
+        None,
+        {"cancelled_turn": True},
+    ]
+    assert result.messages[1].role == "assistant"
+
+
+@pytest.mark.anyio
+async def test_unmarked_checkpoints_carry_no_cancelled_stamp() -> None:
+    saver = _StubSaver()
+    saver.set_alist_result(
+        [
+            {
+                "ts": _iso(0),
+                "channel_values": {"messages": [HumanMessage(content="hi", id="h1")]},
+            }
+        ]
+    )
+
+    plugin = LangGraphQueryPlugin(saver)  # type: ignore[arg-type]
+    result = await plugin.get_messages_for_session("s1")
+
+    assert result.messages[0].additional_kwargs is None
+
+
 @pytest.mark.anyio
 async def test_messages_attributes_first_appearance_timestamp_per_message() -> None:
     """Each message's timestamp should be the ``ts`` of the checkpoint
@@ -931,6 +1075,73 @@ async def test_summary_message_count_matches_messages_endpoint() -> None:
     endpoint_messages = await plugin.get_messages_for_session("session-a")
 
     assert summaries.sessions[0].message_count == len(endpoint_messages.messages) == 4
+
+
+@pytest.mark.anyio
+async def test_summary_preview_falls_back_to_authoritative_messages() -> None:
+    """A first prompt rescued by a cancelled-turn commit exists only in the
+    synthetic tip's channel values — the writes-derived preview pipeline has
+    nothing for it, so the preview comes from the authoritative list the
+    count already loaded."""
+    saver = _StubSaver()
+    latest = datetime(2026, 5, 22, 10, 0, 0, tzinfo=timezone.utc)
+    saver.checkpoint_collection.set_aggregate_result(
+        [{"_id": "s1", "latest_ts": latest, "first_ts": latest}]
+    )
+    saver.writes_collection.set_aggregate_result([])  # no checkpoint_writes rows
+    saver.set_alist_result(
+        [
+            {
+                "ts": _iso(0),
+                "channel_values": {
+                    "messages": [
+                        HumanMessage(
+                            content="rescued first prompt",
+                            id="h1",
+                            additional_kwargs={"cancelled_turn": True},
+                        )
+                    ]
+                },
+            }
+        ]
+    )
+    plugin = LangGraphQueryPlugin(saver)  # type: ignore[arg-type]
+
+    result = await plugin.get_summaries_for_sessions(["s1"])
+
+    assert result.sessions[0].message_count == 1
+    assert result.sessions[0].first_message_preview == "rescued first prompt"
+
+
+@pytest.mark.anyio
+async def test_writes_preview_wins_over_the_fallback() -> None:
+    """Normal sessions keep the checkpoint_writes-derived preview — the
+    authoritative-list fallback only fills sessions the writes pipeline
+    missed."""
+    saver = _StubSaver()
+    latest = datetime(2026, 5, 22, 10, 0, 0, tzinfo=timezone.utc)
+    saver.checkpoint_collection.set_aggregate_result(
+        [{"_id": "s1", "latest_ts": latest, "first_ts": latest}]
+    )
+    saver.writes_collection.set_aggregate_result(
+        [{"_id": "s1", "writes": [{"type": "t", "value": "v"}]}]
+    )
+    saver.serde.register("t", "v", [HumanMessage(content="from writes", id="h9")])
+    saver.set_alist_result(
+        [
+            {
+                "ts": _iso(0),
+                "channel_values": {
+                    "messages": [HumanMessage(content="from checkpoints", id="h1")]
+                },
+            }
+        ]
+    )
+    plugin = LangGraphQueryPlugin(saver)  # type: ignore[arg-type]
+
+    result = await plugin.get_summaries_for_sessions(["s1"])
+
+    assert result.sessions[0].first_message_preview == "from writes"
 
 
 @pytest.mark.anyio

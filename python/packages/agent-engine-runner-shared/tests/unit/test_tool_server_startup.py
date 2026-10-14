@@ -162,7 +162,9 @@ class TestToolServerStartup:
             def __init__(self, definitions):
                 assert definitions.source.name == "jiradc"
 
-            def execute(self, name, arguments, *, env):
+            def execute(self, name, arguments, *, env, authorization):
+                """Observe the runtime boundary without replacing credential selection."""
+                assert authorization is None
                 calls.append((name, arguments, env.get("JIRA_TOKEN")))
                 return "connector result"
 
@@ -526,7 +528,9 @@ class TestToolServerStartup:
             arguments: dict[str, Any],
             *,
             env: dict[str, str] | None = None,
+            authorization=None,
         ) -> str:
+            """Observe the environment captured separately for each worker."""
             issue = arguments["issueIdOrKey"]
             if issue == "FIRST-1":
                 first_started.set()
@@ -568,6 +572,91 @@ class TestToolServerStartup:
             assert observed == {"FIRST-1": "token-a", "SECOND-2": "token-b"}
         finally:
             release_first.set()
+            await server.on_shutdown()
+
+    @pytest.mark.asyncio
+    async def test_oauth_connector_overlap_cancellation_and_redaction(
+        self, monkeypatch, tmp_path, caplog
+    ):
+        """Real connector workers retain their own token and clear context on every exit."""
+        import asyncio
+        import threading
+
+        import yaml
+
+        from agent_engine_runner_shared.connectors import ConnectorExecutor
+
+        index = _write_connector_bundle(tmp_path)
+        path = tmp_path / "jiradc.tool_defs.yaml"
+        document = yaml.safe_load(path.read_text())
+        document["auth"] = {"type": "oauth", "provider_type": "github", "scopes": ["repo"]}
+        path.write_text(yaml.safe_dump(document))
+        monkeypatch.setenv(CONNECTOR_BUNDLE_PATH_ENV, str(index))
+        monkeypatch.setenv("JIRA_TOKEN", "shared-fallback")
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        observed = {}
+
+        def resource(request):
+            """Observe headers independently and make Alice's call overlap Bob's."""
+            issue = request.url.path.split("/")[-2]
+            observed[issue] = request.headers["authorization"]
+            if issue == "ALICE":
+                started.set()
+                assert release.wait(5)
+                finished.set()
+            if issue == "ERROR":
+                return httpx.Response(403, json={"message": "denied alice-token"})
+            return httpx.Response(200, text=issue)
+
+        monkeypatch.setattr(
+            "agent_engine_runner_shared.connectors.runtime.ConnectorExecutor",
+            lambda definitions: ConnectorExecutor(
+                definitions, transport=httpx.MockTransport(resource)
+            ),
+        )
+        server = ToolServer(_make_runtime(deep_agent_enabled=False))
+        await server.on_startup()
+
+        async def invoke(issue, token=None):
+            """Send typed per-call authorization through the actual ToolServer boundary."""
+            response = await server._handle_execute(
+                ToolPodExecuteRequest(
+                    execution_id=issue,
+                    tool_name="jiradc_getComments",
+                    session_id=issue,
+                    arguments={"issueIdOrKey": issue},
+                    authorization={"token": token} if token is not None else None,
+                )
+            )
+            assert get_current_authorization() is None
+            return response
+
+        first = asyncio.create_task(invoke("ALICE", "alice-token"))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            assert (await invoke("BOB", "bob-token")).result == "BOB"
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            assert (await invoke("MISSING")).status == "error"
+            release.set()
+            assert await asyncio.to_thread(finished.wait, 5)
+            assert (await invoke("REUSE", "alice-token")).result == "REUSE"
+            error = await invoke("ERROR", "alice-token")
+            assert error.status == "error"
+            assert "alice-token" not in error.model_dump_json()
+            assert observed == {
+                "ALICE": "Bearer alice-token",
+                "BOB": "Bearer bob-token",
+                "REUSE": "Bearer alice-token",
+                "ERROR": "Bearer alice-token",
+            }
+            assert "alice-token" not in caplog.text
+            assert "bob-token" not in caplog.text
+        finally:
+            release.set()
             await server.on_shutdown()
 
     @pytest.mark.asyncio

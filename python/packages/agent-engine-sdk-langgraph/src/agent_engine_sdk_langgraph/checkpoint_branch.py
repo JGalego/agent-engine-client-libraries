@@ -12,11 +12,16 @@ from typing import Any, cast
 
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.base import BaseCheckpointSaver, empty_checkpoint
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Interrupt, StateSnapshot, StateUpdate
+from langgraph.types import Interrupt, Overwrite, StateSnapshot, StateUpdate
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_engine_sdk_langgraph.cancelled_turn import (
+    CANCELLED_TURN_METADATA_KEY,
+    clear_queued_tasks,
+    terminalize_versions_seen,
+)
 from agent_engine_sdk_langgraph.suspend import canonical_interrupt_value
 
 _logger = logging.getLogger(__name__)
@@ -234,6 +239,31 @@ async def completed_root_checkpoint(
     return LangGraphCheckpoint(thread_id=thread_id, checkpoint_id=checkpoint_id)
 
 
+def _cancelled_tip_updates(snapshot: Any, writer_node: str) -> list[StateUpdate]:
+    """Materialize a cancelled-turn marker tip as one synthetic superstep.
+
+    The marker checkpoint deliberately carries no checkpoint_writes rows, so
+    task-derived replay would lose its mutations (the rescued user message and
+    the stopped stamp). Overwrite replaces the messages channel wholesale with
+    the tip's authoritative list — the dest replay re-mints message ids, so
+    id-keyed reducer replacement cannot carry the stamp.
+    """
+    messages = list((snapshot.values or {}).get("messages") or [])
+    if not messages:
+        return []
+    return [
+        StateUpdate({"messages": Overwrite(messages)}, writer_node, "cancelled-turn")
+    ]
+
+
+def _replay_writer_node(graph: Any) -> str:
+    """Node a synthetic superstep's writes are attributed to."""
+    names = [
+        str(node) for node in graph.get_graph().nodes if not str(node).startswith("__")
+    ]
+    return sorted(names)[0] if names else "__start__"
+
+
 async def checkpoint_replay_plan(
     graph: CompiledStateGraph[Any, Any, Any, Any],
     source: LangGraphCheckpoint,
@@ -255,11 +285,75 @@ async def checkpoint_replay_plan(
     for snapshot in reversed(
         [item async for item in _checkpoint_history(graph, source_config)]
     ):
-        if updates := _state_updates(snapshot):
+        snapshot_metadata = getattr(snapshot, "metadata", None)
+        if isinstance(snapshot_metadata, dict) and snapshot_metadata.get(
+            CANCELLED_TURN_METADATA_KEY
+        ):
+            updates = _cancelled_tip_updates(snapshot, _replay_writer_node(graph))
+        else:
+            updates = _state_updates(snapshot)
+        if updates:
             supersteps.append(updates)
     if not supersteps:
         raise RuntimeError("LangGraph branch point has no checkpoint history")
     return supersteps
+
+
+async def _terminalize_copied_marker_tip(
+    graph: CompiledStateGraph[Any, Any, Any, Any], thread_id: str
+) -> None:
+    """Close the copied marker tip's artificially-triggered work.
+
+    Replaying a marker tip applies its message state wholesale (no task
+    writes), so nodes that never ran in the source have no ``versions_seen``
+    coverage on the dest and would read as pending — a follow-up on the fork
+    would resume the cancelled super-step, and the copy's own source-equality
+    check rejects a non-terminal tip. The written tip keeps the marker: it is
+    itself an authoritative-values, writes-less checkpoint and must replay as
+    one when the fork becomes a fork source.
+    """
+    checkpointer = graph.checkpointer
+    if checkpointer is None or isinstance(checkpointer, bool):
+        return
+    # Any: the saver is a duck type here (native unwrap or the checkpointer
+    # itself); the marker metadata rides keys beyond CheckpointMetadata.
+    saver: Any = getattr(checkpointer, "native", None) or checkpointer
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    latest = await saver.aget_tuple(config)
+    if latest is None:
+        return
+    channel_versions = dict(latest.checkpoint.get("channel_versions") or {})
+    versions_seen = {
+        node: dict(seen)
+        for node, seen in (latest.checkpoint.get("versions_seen") or {}).items()
+    }
+    terminalize_versions_seen(
+        versions_seen, channel_versions, graph.get_graph().nodes.keys()
+    )
+    checkpoint = empty_checkpoint()
+    checkpoint["channel_values"] = clear_queued_tasks(
+        dict(latest.checkpoint.get("channel_values") or {})
+    )
+    checkpoint["channel_versions"] = channel_versions
+    checkpoint["versions_seen"] = versions_seen
+    metadata: dict[str, Any] = {
+        "source": "loop",
+        "step": (latest.metadata or {}).get("step", -1) + 1,
+        "parents": {},
+        CANCELLED_TURN_METADATA_KEY: True,
+    }
+    await saver.aput(
+        {
+            "configurable": {
+                "thread_id": thread_id,
+                "checkpoint_ns": "",
+                "checkpoint_id": latest.checkpoint["id"],
+            }
+        },
+        checkpoint,
+        metadata,
+        channel_versions,
+    )
 
 
 async def copy_checkpoint(
@@ -299,7 +393,16 @@ async def copy_checkpoint(
         "configurable": target_configurable,
     }
     copied_config = await graph.abulk_update_state(destination_config, supersteps)
-    copied = await graph.aget_state(copied_config)
+    selected_metadata = getattr(selected, "metadata", None)
+    if isinstance(selected_metadata, dict) and selected_metadata.get(
+        CANCELLED_TURN_METADATA_KEY
+    ):
+        await _terminalize_copied_marker_tip(graph, target_thread_id)
+        copied = await graph.aget_state(
+            {"configurable": {"thread_id": target_thread_id, "checkpoint_ns": ""}}
+        )
+    else:
+        copied = await graph.aget_state(copied_config)
     if (
         copied.next
         or copied.tasks

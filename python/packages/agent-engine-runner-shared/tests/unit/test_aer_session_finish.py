@@ -63,7 +63,7 @@ def _make_server() -> AERServer:
     server._chunk_seq = {}  # type: ignore[attr-defined]
     server._owner_callback_url = {}  # type: ignore[attr-defined]
     server._durability_owner_id = "owner-test"  # type: ignore[attr-defined]
-    server._pending_session_finish = set()  # type: ignore[attr-defined]
+    server._pending_session_finish = {}  # type: ignore[attr-defined]
     server._callback_delivery = CallbackDelivery(  # type: ignore[attr-defined]
         lambda url: server._get_client(url)  # type: ignore[attr-defined]
     )
@@ -137,7 +137,7 @@ def test_no_finish_request_means_no_finish_call() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
     server._release_finished_session.assert_not_called()
-    assert server._pending_session_finish == set()
+    assert server._pending_session_finish == {}
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ def test_requested_and_completed_fires_exactly_one_finish_after_response() -> No
     # Callback (part of the response body being assembled) happened, then -
     # and only then - the finish POST fired as a background task.
     assert call_log == ["callback", "finish"]
-    assert server._pending_session_finish == set()
+    assert server._pending_session_finish == {}
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ def test_suspended_run_means_no_finish_call() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "suspended"
     server._release_finished_session.assert_not_called()
-    assert server._pending_session_finish == set()
+    assert server._pending_session_finish == {}
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +278,7 @@ def test_failing_run_means_no_finish_call() -> None:
 
     assert response.status_code == 500
     server._release_finished_session.assert_not_called()
-    assert server._pending_session_finish == set()
+    assert server._pending_session_finish == {}
 
 
 # ---------------------------------------------------------------------------
@@ -323,12 +323,29 @@ async def test_memory_writes_drain_before_finish_post() -> None:
     assert finish_calls == ["http://oe/executions/exec-drain/finish"]
 
 
-async def test_terminal_callback_settles_before_finish_post() -> None:
+@pytest.mark.parametrize("durable", [False, True])
+async def test_terminal_callback_settles_before_finish_post(durable: bool) -> None:
     server = _make_server()
-    callback_key = _CallbackKey("exec-callback", "terminal")
+    origin = {"attempt_id": "B", "attempt_fence": 2} if durable else {}
+    callback_key = _CallbackKey(
+        "exec-callback",
+        "terminal",
+        attempt_id=origin.get("attempt_id"),
+        attempt_fence=origin.get("attempt_fence"),
+    )
+    old_key = _CallbackKey("exec-callback", "terminal", attempt_id="A", attempt_fence=1)
+    server._callback_delivery._pending[old_key] = _PendingCallback(
+        oe_url="http://oe",
+        body={
+            "execution_id": "exec-callback",
+            "status": "ERROR",
+            "attempt_id": "A",
+            "attempt_fence": 1,
+        },
+    )
     server._callback_delivery._pending[callback_key] = _PendingCallback(  # type: ignore[attr-defined]
         oe_url="http://oe",
-        body={"execution_id": "exec-callback", "status": "COMPLETED"},
+        body={"execution_id": "exec-callback", "status": "COMPLETED", **origin},
     )
     release_callback = asyncio.Event()
 
@@ -351,7 +368,10 @@ async def test_terminal_callback_settles_before_finish_post() -> None:
         ),
     ):
         finish_task = asyncio.create_task(
-            server._release_finished_session(_execute_request("exec-callback"))
+            server._release_finished_session(
+                _execute_request("exec-callback"),
+                {"execution_id": "exec-callback", "status": "COMPLETED", **origin},
+            )
         )
         await asyncio.sleep(0)
         assert finish_calls == []
@@ -360,6 +380,7 @@ async def test_terminal_callback_settles_before_finish_post() -> None:
         await finish_task
 
     assert finish_calls == ["http://oe/executions/exec-callback/finish"]
+    assert old_key in server._callback_delivery._pending
 
 
 async def test_memory_writes_stuck_above_zero_still_fires_after_bounded_timeout(

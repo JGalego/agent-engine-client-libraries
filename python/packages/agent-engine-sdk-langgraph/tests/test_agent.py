@@ -1584,7 +1584,10 @@ class TestLangGraphBaseAgent:
         assert len(result["messages"]) == 1
         assert isinstance(result["messages"][0], HumanMessage)
         assert result["messages"][0].content == "Hello"
-        assert result["messages"][0].id is None
+        # The id is assigned at build time so a cancelled-turn commit at
+        # teardown can identify this exact message by identity, not content.
+        assert result["messages"][0].id is not None
+        assert result["messages"][0].id.startswith("input:")
         assert result["user_id"] == "user-1"
         assert result["session_id"] == "session-1"
 

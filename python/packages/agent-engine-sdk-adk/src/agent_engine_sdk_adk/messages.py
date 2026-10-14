@@ -37,6 +37,7 @@ _ROLE_ADK_TO_PLATFORM: dict[str, Role] = {
 }
 _ADK_CONTROL_FUNCTION_NAMES = frozenset(
     {
+        "adk_framework",
         "adk_request_confirmation",
         "adk_request_credential",
     }

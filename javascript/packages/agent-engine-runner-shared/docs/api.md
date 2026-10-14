@@ -9,6 +9,7 @@
   - [ActivityOutcomeKind](#api-activityoutcomekind)
   - [MessageRole](#api-messagerole)
   - [RuntimeMode](#api-runtimemode)
+  - [UnknownOutcomePolicy](#api-unknownoutcomepolicy)
   - [WorkflowErrorCode](#api-workflowerrorcode)
 - **Classes**
   - [ActivityDispatch](#api-activitydispatch)
@@ -400,6 +401,7 @@
   - [ToolPodExecuteResponseSchema](#api-toolpodexecuteresponseschema)
   - [ToolResultRequestSchema](#api-toolresultrequestschema)
   - [ToolsListResponseSchema](#api-toolslistresponseschema)
+  - [UnknownOutcomePolicySchema](#api-unknownoutcomepolicyschema)
   - [WorkflowDeclarationSchema](#api-workflowdeclarationschema)
   - [WorkflowErrorCodeSchema](#api-workflowerrorcodeschema)
   - [WorkflowErrorSchema](#api-workflowerrorschema)
@@ -534,6 +536,7 @@
   - [nextScopedCallIndex()](#api-nextscopedcallindex)
   - [normalizeContent()](#api-normalizecontent)
   - [normalizeLLMPodInvokeResponse()](#api-normalizellmpodinvokeresponse)
+  - [normalizeMcpToolAnnotations()](#api-normalizemcptoolannotations)
   - [normalizeMcpToolResult()](#api-normalizemcptoolresult)
   - [normalizeOptionalStr()](#api-normalizeoptionalstr)
   - [normalizeToolCallArgs()](#api-normalizetoolcallargs)
@@ -866,6 +869,29 @@ Runtime mode for the Runner SDK.
 
 ***
 
+<a id="api-unknownoutcomepolicy"></a>
+
+### UnknownOutcomePolicy
+
+UnknownOutcomePolicy tells OE what to do with a tool activity that was
+started by an attempt whose runner was lost before reporting an outcome.
+RERUN gives the tool at-least-once execution; the other values never run it
+again.
+
+#### Generated
+
+from enum mongodb.agentic.workflow.v1.UnknownOutcomePolicy
+
+#### Enumeration Members
+
+| Enumeration Member | Value | Description |
+| :------ | :------ | :------ |
+| <a id="api-enumeration-member-fail"></a> `FAIL` | `1` | Refuse a replacement attempt while the outcome is unknown. **Generated** from enum value: UNKNOWN_OUTCOME_POLICY_FAIL = 1; |
+| <a id="api-enumeration-member-rerun"></a> `RERUN` | `2` | Dispatch the activity again to the replacement attempt. **Generated** from enum value: UNKNOWN_OUTCOME_POLICY_RERUN = 2; |
+| <a id="api-enumeration-member-unspecified-3"></a> `UNSPECIFIED` | `0` | **Generated** from enum value: UNKNOWN_OUTCOME_POLICY_UNSPECIFIED = 0; |
+
+***
+
 <a id="api-workflowerrorcode"></a>
 
 ### WorkflowErrorCode
@@ -887,7 +913,7 @@ from enum mongodb.agentic.workflow.v1.WorkflowErrorCode
 | <a id="api-enumeration-member-outcome_unknown"></a> `OUTCOME_UNKNOWN` | `7` | **Generated** from enum value: WORKFLOW_ERROR_CODE_OUTCOME_UNKNOWN = 7; |
 | <a id="api-enumeration-member-stale_fence"></a> `STALE_FENCE` | `4` | **Generated** from enum value: WORKFLOW_ERROR_CODE_STALE_FENCE = 4; |
 | <a id="api-enumeration-member-unauthorized"></a> `UNAUTHORIZED` | `8` | **Generated** from enum value: WORKFLOW_ERROR_CODE_UNAUTHORIZED = 8; |
-| <a id="api-enumeration-member-unspecified-3"></a> `UNSPECIFIED` | `0` | **Generated** from enum value: WORKFLOW_ERROR_CODE_UNSPECIFIED = 0; |
+| <a id="api-enumeration-member-unspecified-4"></a> `UNSPECIFIED` | `0` | **Generated** from enum value: WORKFLOW_ERROR_CODE_UNSPECIFIED = 0; |
 | <a id="api-enumeration-member-version_unavailable"></a> `VERSION_UNAVAILABLE` | `6` | **Generated** from enum value: WORKFLOW_ERROR_CODE_VERSION_UNAVAILABLE = 6; |
 
 ## Classes
@@ -990,7 +1016,7 @@ BaseServer.constructor
 | :------ | :------ | :------ | :------ | :------ |
 | <a id="api-property-app"></a> `app` | `protected` | \| `FastifyInstance`\<`RawServerDefault`, `IncomingMessage`, `ServerResponse`\<`IncomingMessage`\>, `FastifyBaseLogger`, `FastifyTypeProviderDefault`\> \| `null` | `null` | `BaseServer.app` |
 | <a id="api-property-ownercallbackurl"></a> `ownerCallbackUrl` | `public` | `Map`\<`string`, `string`\> | `undefined` | - |
-| <a id="api-property-pendingsessionfinish"></a> `pendingSessionFinish` | `public` | `Set`\<`string`\> | `undefined` | - |
+| <a id="api-property-pendingsessionfinish"></a> `pendingSessionFinish` | `public` | `Map`\<`string`, \{ `attempt_fence?`: `number`; `attempt_id?`: `string`; `error?`: `string`; `execution_id`: `string`; `interrupts?`: `object`[]; `metadata?`: `Record`\<`string`, `unknown`\>; `result?`: `unknown`; `resume_schema?`: `Record`\<`string`, `unknown`\>; `status`: `string`; `suspend_context?`: `Record`\<`string`, `unknown`\>; `suspend_generation?`: `number`; `suspend_reason?`: `string`; \}\> | `undefined` | - |
 | <a id="api-property-runtime"></a> `runtime` | `readonly` | [`ITenantRuntime`](#api-itenantruntime) | `undefined` | `BaseServer.runtime` |
 
 #### Accessors
@@ -4815,8 +4841,9 @@ new WorkflowClient(oeUrl, options?): WorkflowClient;
 | Parameter | Type |
 | :------ | :------ |
 | `oeUrl` | `string` |
-| `options` | \{ `fetch?`: \{ (`input`, `init?`): `Promise`\<`Response`\>; (`input`, `init?`): `Promise`\<`Response`\>; \}; `timeoutMs?`: `number`; \} |
+| `options` | \{ `fetch?`: \{ (`input`, `init?`): `Promise`\<`Response`\>; (`input`, `init?`): `Promise`\<`Response`\>; \}; `signal?`: `AbortSignal`; `timeoutMs?`: `number`; \} |
 | `options.fetch?` | \{ (`input`, `init?`): `Promise`\<`Response`\>; (`input`, `init?`): `Promise`\<`Response`\>; \} |
+| `options.signal?` | `AbortSignal` |
 | `options.timeoutMs?` | `number` |
 
 **Returns**
@@ -5419,6 +5446,7 @@ Discovered MCP tool bound to a configured server.
 
 | Property | Modifier | Type |
 | :------ | :------ | :------ |
+| <a id="api-property-annotations"></a> `annotations?` | `readonly` | `Record`\<`string`, `unknown`\> |
 | <a id="api-property-description-1"></a> `description` | `readonly` | `string` |
 | <a id="api-property-inputschema"></a> `inputSchema` | `readonly` | `Record`\<`string`, `unknown`\> |
 | <a id="api-property-sdktoolname"></a> `sdkToolName` | `readonly` | `string` |
@@ -5811,6 +5839,7 @@ ActivityCommand submits semantic input at a deterministic workflow position.
 | `activityName` | `string` | **Generated** from field: string activity_name = 6; |
 | `attemptId` | `string` | **Generated** from field: string attempt_id = 2; |
 | `fencingToken` | `bigint` | **Generated** from field: int64 fencing_token = 3; |
+| `onUnknownOutcome` | [`UnknownOutcomePolicy`](#api-unknownoutcomepolicy) | Only tool activities accept a policy. **Generated** from field: mongodb.agentic.workflow.v1.UnknownOutcomePolicy on_unknown_outcome = 8; |
 | `position?` | [`ActivityPosition`](#api-activityposition) | **Generated** from field: mongodb.agentic.workflow.v1.ActivityPosition position = 4; |
 | `semanticInput?` | `Value` | **Generated** from field: google.protobuf.Value semantic_input = 7; |
 | `workflowIdentity?` | [`WorkflowIdentity`](#api-workflowidentity) | **Generated** from field: mongodb.agentic.workflow.v1.WorkflowIdentity workflow_identity = 1; |
@@ -6327,6 +6356,7 @@ frontier and no entries for a committed root step.
 | :------ | :------ | :------ |
 | `entries` | [`StepActivityEntry`](#api-stepactivityentry)[] | **Generated** from field: repeated mongodb.agentic.workflow.v1.StepActivityEntry entries = 1; |
 | `error?` | [`WorkflowError`](#api-workflowerror) | **Generated** from field: mongodb.agentic.workflow.v1.WorkflowError error = 2; |
+| `sourceStateHash` | `string` | The immutable accepted root marker's hash, including on replay. Executors retain this acknowledgement rather than hashing reconstructed state. **Generated** from field: string source_state_hash = 3; |
 
 #### Generated
 
@@ -7731,6 +7761,8 @@ Execution step record stored in TenantDB.
 
 ```ts
 const ExecutorCallbackRequestSchema: ZodObject<{
+  attempt_fence: ZodOptional<ZodNumber>;
+  attempt_id: ZodOptional<ZodString>;
   error: ZodOptional<ZodString>;
   execution_id: ZodString;
   interrupts: ZodOptional<ZodArray<ZodObject<{
@@ -9462,6 +9494,18 @@ const ToolsListResponseSchema: ZodObject<{
 ```
 
 Response from /tools endpoint listing registered tools.
+
+***
+
+<a id="api-unknownoutcomepolicyschema"></a>
+
+### UnknownOutcomePolicySchema
+
+```ts
+const UnknownOutcomePolicySchema: GenEnum<UnknownOutcomePolicy>;
+```
+
+Describes the enum mongodb.agentic.workflow.v1.UnknownOutcomePolicy.
 
 ***
 
@@ -12698,6 +12742,29 @@ Returns the response (possibly with a freshly-built `result`/`usage`).
 | `result.usage?` | `Record`\<`string`, `unknown`\> | - |
 | `status` | `string` | Execution status: success, error. |
 | `usage?` | [`LLMTokenUsage`](#api-llmtokenusage) | Token usage (input_tokens, output_tokens, total_tokens). |
+
+***
+
+<a id="api-normalizemcptoolannotations"></a>
+
+### normalizeMcpToolAnnotations()
+
+```ts
+function normalizeMcpToolAnnotations(value): Record<string, unknown> | undefined;
+```
+
+Return a JSON-safe copy of MCP `Tool.annotations`, or `undefined` when the
+value is missing or not a serializable plain object.
+
+#### Parameters
+
+| Parameter | Type |
+| :------ | :------ |
+| `value` | `unknown` |
+
+#### Returns
+
+`Record`\<`string`, `unknown`\> \| `undefined`
 
 ***
 

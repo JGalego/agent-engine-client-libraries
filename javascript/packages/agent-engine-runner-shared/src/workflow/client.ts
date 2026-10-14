@@ -40,6 +40,10 @@ import {
   type FinalizeStepCommand,
 } from "../generated/workflow/v1/state_pb.js";
 import { fetchPlatform, getFetchOptionsWithTLS } from "../tls_client.js";
+import {
+  encodeCancelledHistoryReport,
+  type CancelledHistoryReport,
+} from "./cancelled_history.js";
 
 const ATTEMPT_START_PATH = "/executor/attempt/start";
 const ATTEMPT_HEARTBEAT_PATH = "/executor/attempt/heartbeat";
@@ -313,14 +317,22 @@ export class WorkflowClient {
   private readonly baseUrl: string;
   private readonly fetchFn: FetchFn;
   private readonly timeoutMs: number;
+  /**
+   * Optional execution-scoped signal. Unlike {@link withExecutionSignal}, which
+   * reads the current execution context at call time, this is captured at
+   * construction so calls made outside the execution's async context (e.g. a
+   * heartbeat interval callback) still observe the cancellation.
+   */
+  private readonly executionSignal: AbortSignal | undefined;
 
   constructor(
     oeUrl: string,
-    options: { fetch?: FetchFn; timeoutMs?: number } = {},
+    options: { fetch?: FetchFn; timeoutMs?: number; signal?: AbortSignal } = {},
   ) {
     this.baseUrl = oeUrl.replace(/\/$/, "");
     this.fetchFn = options.fetch ?? fetch;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.executionSignal = options.signal;
   }
 
   async startAttempt(
@@ -445,6 +457,13 @@ export class WorkflowClient {
   async finalizeStep(
     command: FinalizeStepCommand,
   ): Promise<StepActivityEntry[]> {
+    return (await this.finalizeStepWithAcknowledgement(command)).entries;
+  }
+
+  /** @internal Preserve the authority's original accepted-state provenance. */
+  async finalizeStepWithAcknowledgement(
+    command: FinalizeStepCommand,
+  ): Promise<{ entries: StepActivityEntry[]; sourceStateHash: string }> {
     const response = await this.post(
       STEP_FINALIZE_PATH,
       encodeProtoJson(FinalizeStepCommandSchema, command),
@@ -464,7 +483,7 @@ export class WorkflowClient {
         { cause: error },
       );
     }
-    return parsed.entries;
+    return { entries: parsed.entries, sourceStateHash: parsed.sourceStateHash };
   }
 
   async completeExecution(command: CompleteExecutionCommand): Promise<void> {
@@ -477,6 +496,21 @@ export class WorkflowClient {
       response.status,
       await readResponseText(response, "execution completion"),
       "execution completion",
+    );
+  }
+
+  /** @internal Executor display-history callback, not workflow finalization. */
+  async reportCancelledHistory(report: CancelledHistoryReport): Promise<void> {
+    const operation = "cancelled history";
+    const response = await this.post(
+      "/executor/cancelled-history",
+      encodeCancelledHistoryReport(report),
+      operation,
+    );
+    raiseOnError(
+      response.status,
+      await readResponseText(response, operation),
+      operation,
     );
   }
 
@@ -494,7 +528,15 @@ export class WorkflowClient {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: payload,
-          signal: AbortSignal.timeout(this.timeoutMs),
+          // The execution signal (when bound) cancels an in-flight call on a
+          // Stop, so startup work cannot outlive the drain's reporting budget.
+          signal:
+            this.executionSignal === undefined
+              ? AbortSignal.timeout(this.timeoutMs)
+              : AbortSignal.any([
+                  AbortSignal.timeout(this.timeoutMs),
+                  this.executionSignal,
+                ]),
         },
         this.fetchFn,
       );

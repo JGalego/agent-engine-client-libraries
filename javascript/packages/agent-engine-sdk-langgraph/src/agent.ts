@@ -16,8 +16,9 @@ import {
   type BaseMessage,
 } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { Command, type Interrupt } from "@langchain/langgraph";
+import { Command, type Interrupt, Overwrite } from "@langchain/langgraph";
 import type { CompiledStateGraph } from "@langchain/langgraph";
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -28,7 +29,13 @@ import {
   type RequestContext,
   type StreamEvent,
 } from "@mongodb-js/agent-engine-sdk";
-import { getLogger } from "@mongodb-js/agent-engine-runner-shared";
+import {
+  currentAttemptContext,
+  currentCancelledHistory,
+  getLogger,
+  type CancelledHistoryCapture,
+} from "@mongodb-js/agent-engine-runner-shared";
+import { commitCancelledTurnCheckpoint } from "./cancelled_turn.js";
 import {
   type ExecutionSession,
   type PrepareAgentInput,
@@ -38,9 +45,15 @@ import { installDurableMessageIdentity } from "./durable_message_identity.js";
 import { DurableSubgraphResolver } from "./durable_subgraphs.js";
 import { iterTaskCalls } from "./deep_agent_task.js";
 import type { DeepAgentTaskCall } from "./deep_agent_task.js";
-import { lcMessagesToPlatform, unwrapMessageValues } from "./messages.js";
+import {
+  copyMessageWithId,
+  lcMessagesToPlatform,
+  unwrapMessageValues,
+} from "./messages.js";
+import { PlatformCheckpointer } from "./platform_checkpointer.js";
 import { wrapSessionForkUpdateState } from "./session_fork.js";
 import { executionSession } from "./session_factory.js";
+import { checkpointThreadId } from "./thread_id.js";
 
 const logger = getLogger("agent_engine_sdk_langgraph.agent");
 
@@ -266,6 +279,61 @@ class _ExecutionResult implements ExecutionResult {
   }
 }
 
+// Turn-opening message ids captured at graph-input build, keyed by the
+// request context object (collected with it). The drain-teardown hook reads
+// and deletes the entry: identity — not prompt text — is how the
+// cancelled-turn commit finds its message.
+const turnMessageIds = new WeakMap<RequestContext, string>();
+
+/**
+ * Record the turn-opening message id for the cancelled-turn commit at
+ * teardown. A prepareInput hook may rewrite content, so the hook must not
+ * re-discover the message by comparing strings. When the builder left the
+ * opener id-less (hooks are not required to set ids), assign one first —
+ * LangGraph would only mint it inside the run, too late to capture here.
+ * Resume turns stash nothing — they open no new user message (Command(resume)
+ * path).
+ */
+function stashTurnMessageId(ctx: RequestContext, graphInput: unknown): void {
+  let messages = (graphInput as { messages?: unknown } | null)?.messages;
+  // A hook may wrap its list in Overwrite — a class instance or the
+  // serialized `__overwrite__` wire shape; the opener the graph persists
+  // lives inside it. Both unwrap to the LIVE inner array — no copy — so the
+  // id-bearing replacement below still reaches the graph input.
+  if (Overwrite.isInstance(messages)) {
+    messages =
+      messages instanceof Overwrite
+        ? messages.value
+        : (messages as { __overwrite__: unknown }).__overwrite__;
+  }
+  if (!Array.isArray(messages)) return;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as {
+      getType?: () => unknown;
+      type?: unknown;
+      id?: unknown;
+    } | null;
+    if (message === null || typeof message !== "object") continue;
+    const type =
+      typeof message.getType === "function" ? message.getType() : message.type;
+    if (type !== "human") continue;
+    if (typeof message.id !== "string" || message.id === "") {
+      // The builder (e.g. a prepareInput hook) left the opener id-less —
+      // LangGraph would only mint the id inside the run, too late to capture.
+      // Ids only stick via construction, so replace the entry with a copy.
+      const withId = copyMessageWithId(
+        message as unknown as BaseMessage,
+        `input:${randomUUID()}`,
+      );
+      messages[i] = withId;
+      turnMessageIds.set(ctx, withId.id as string);
+      return;
+    }
+    turnMessageIds.set(ctx, message.id);
+    return;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // LangGraphBaseAgent
 // ---------------------------------------------------------------------------
@@ -317,6 +385,54 @@ export class LangGraphBaseAgent implements BaseAgent {
     );
   }
 
+  /** @internal AER capability; only the current durable attempt is visible. */
+  captureCancelledHistory(): CancelledHistoryCapture | null {
+    return currentCancelledHistory()?.capture() ?? null;
+  }
+
+  /**
+   * Checkpoint the cancelled turn so session history can serve it.
+   * Invoked by runner-shared when an execution-cancelled drain tears down
+   * invoke/stream. No-op for durable sessions: their history is OE-owned and
+   * scratch checkpoints are discarded by design. The attempt-context check is
+   * a backstop — the caller gates on the attempt it started, because by
+   * teardown the attempt context may already be closed.
+   *
+   * Returns the committed checkpoint's coordinate (`thread_id` +
+   * `checkpoint_id`) so the runner can report it to OE — the branch-source
+   * selector needs it to fork from a session whose only checkpoint is this
+   * rescued marker — or null when nothing was committed.
+   */
+  async commitCancelledTurn(
+    ctx: RequestContext,
+    input: AgentInput,
+  ): Promise<{ thread_id: string; checkpoint_id: string } | null> {
+    if (currentAttemptContext() !== null) return null;
+    const threadId = checkpointThreadId(ctx, this.resolveThreadIdFn);
+    const raw = this.compiledGraph.checkpointer;
+    const saver = raw instanceof PlatformCheckpointer ? raw.native : raw;
+    if (saver == null || typeof saver !== "object") {
+      return null; // stateless graph (no Mongo store): nothing to commit
+    }
+    const payload = input.payload as Record<string, unknown> | undefined;
+    const userMessage = String(payload?.["message"] ?? "");
+    if (!userMessage) return null;
+    const turnMessageId = turnMessageIds.get(ctx) ?? null;
+    turnMessageIds.delete(ctx);
+    await commitCancelledTurnCheckpoint(saver, {
+      threadId,
+      userMessage,
+      turnMessageId,
+      nodeNames: Object.keys(this.compiledGraph.getGraph().nodes),
+      resume: ctx.resume === true,
+    });
+    // The synthetic tip IS the just-written checkpoint: read its id back
+    // rather than threading it through the commit's message-id return.
+    const tip = await saver.getTuple({ configurable: { thread_id: threadId } });
+    if (tip === undefined) return null;
+    return { thread_id: threadId, checkpoint_id: String(tip.checkpoint.id) };
+  }
+
   private session(ctx: RequestContext, input: AgentInput): ExecutionSession {
     return executionSession(this.graph, ctx, input, {
       callbacks: this.callbacks,
@@ -329,14 +445,20 @@ export class LangGraphBaseAgent implements BaseAgent {
   async invoke(ctx: RequestContext, input: AgentInput): Promise<AgentOutput> {
     const session = this.session(ctx, input);
     try {
-      return await session.runInGraphScope(() => this.invokeGraph(session));
+      return await session.runInGraphScope(() =>
+        this.invokeGraph(session, ctx),
+      );
     } finally {
       await session.close();
     }
   }
 
-  private async invokeGraph(session: ExecutionSession): Promise<AgentOutput> {
+  private async invokeGraph(
+    session: ExecutionSession,
+    ctx: RequestContext,
+  ): Promise<AgentOutput> {
     const { graphInput, config } = await session.prepareRun();
+    if (!session.resumed) stashTurnMessageId(ctx, graphInput);
     let nextInput = graphInput;
 
     const graphAny = this.graph as unknown as {
@@ -492,7 +614,7 @@ export class LangGraphBaseAgent implements BaseAgent {
   ): AsyncIterable<StreamEvent> {
     const session = this.session(ctx, input);
     try {
-      yield* session.iterateInGraphScope(this.streamGraph(session));
+      yield* session.iterateInGraphScope(this.streamGraph(session, ctx));
     } finally {
       await session.close();
     }
@@ -500,8 +622,10 @@ export class LangGraphBaseAgent implements BaseAgent {
 
   private async *streamGraph(
     session: ExecutionSession,
+    ctx: RequestContext,
   ): AsyncIterable<StreamEvent> {
     const { graphInput, config } = await session.prepareRun();
+    if (!session.resumed) stashTurnMessageId(ctx, graphInput);
     let nextInput = graphInput;
 
     const allMessages: BaseMessage[] = [];

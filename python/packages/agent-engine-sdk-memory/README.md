@@ -303,7 +303,7 @@ Mint the token with the `agentengine` CLI. Create a service account once — the
 client secret is shown only once, so save it immediately:
 
 ```
-agentengine service-account create my-agent --project-id <your-project-id> --role AGENT_DEVELOPER
+agentengine service-account create my-agent --project-id <your-project-id> --role PROJECT_OWNER
 ```
 
 Then exchange the client ID and secret for a short-lived (1-hour) access token
@@ -333,6 +333,13 @@ not match is rejected. A blank `service_account_token` raises `ValueError`.
 and emit a `DeprecationWarning`; passing both the new and the legacy input
 raises `ValueError`. Project API keys can no longer be minted over HTTP, so new
 integrations must use a service-account token.
+
+A service account is the right credential for a **multi-user** application: it
+may name any end user as `user_id`. A human credential may only name an end user
+other than the caller when the project enables end-user delegation; otherwise a
+`user_id` naming another user is rejected with `403`, and updates or deletes of
+another user's record are refused whatever its visibility (a project owner may
+still delete it).
 
 ### Local development
 

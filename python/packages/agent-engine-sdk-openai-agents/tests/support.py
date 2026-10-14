@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from agent_engine_sdk import LLMInvocationOptions, LLMStreamChunk, Message
@@ -26,7 +26,12 @@ from openai.types.responses import (
 )
 
 from agent_engine_runner_shared.hooks import get_llm_adapter_factory, get_named_llm
-from agent_engine_runner_shared.secure_llm_proxy import SecureLLMProxy
+from agent_engine_runner_shared.models import GuardrailReviewHalt
+from agent_engine_runner_shared.secure_llm_proxy import (
+    GuardrailReviewPending,
+    SecureLLMProxy,
+)
+from agent_engine_runner_shared.secure_wrapper import PolicyDeniedException
 from agent_engine_runner_shared.workflow.context import current_operation_path
 from agent_engine_sdk_openai_agents import secure_model
 from agent_engine_sdk_openai_agents.llm_adapter import OpenAIAgentsLLM, RegisteredModel
@@ -172,9 +177,20 @@ def fake_proxy_class(
             FakeProxy.instances.append(self)
 
         def stream(
-            self, *, messages: list[Message], step: int, options: LLMInvocationOptions
+            self,
+            *,
+            messages: list[Message],
+            step: int,
+            options: LLMInvocationOptions,
+            pending_review: Any = None,
         ) -> Iterator[LLMStreamChunk]:
-            call = {"messages": messages, "step": step, "options": options}
+            call = {
+                "messages": messages,
+                "step": step,
+                "options": options,
+                # The halted call a request resolves, once its review is answered.
+                "pending_review": pending_review,
+            }
             self.calls.append(call)
             chunks = list(answer(self, call))
             # The real proxy resolves the operation path when it admits the
@@ -191,13 +207,10 @@ def fake_proxy_class(
     return FakeProxy
 
 
-def route_to_tool_pod(
-    monkeypatch: pytest.MonkeyPatch,
-    registered: RegisteredModel | None = None,
-    *,
-    preallocate_tools: bool = False,
-) -> type:
-    """Stand in for OE: run each AER model activity on the Tool Pod adapter.
+def _tool_pod_answer(
+    registered: RegisteredModel | None,
+) -> Callable[[Any, dict[str, Any]], Iterator[LLMStreamChunk]]:
+    """Answer a model activity by running it on the Tool Pod adapter.
 
     Without ``registered``, resolve the model the way the Tool Pod does: from
     the LLM registry the app's entrypoint filled, through the registered
@@ -223,6 +236,73 @@ def route_to_tool_pod(
 
         yield from asyncio.run(collect())
 
-    proxy_class = fake_proxy_class(answer, preallocate_tools=preallocate_tools)
+    return answer
+
+
+def route_to_tool_pod(
+    monkeypatch: pytest.MonkeyPatch,
+    registered: RegisteredModel | None = None,
+    *,
+    preallocate_tools: bool = False,
+) -> type:
+    """Stand in for OE: run each AER model activity on the Tool Pod adapter."""
+    proxy_class = fake_proxy_class(
+        _tool_pod_answer(registered), preallocate_tools=preallocate_tools
+    )
     monkeypatch.setattr(secure_model, "SecureLLMProxy", proxy_class)
     return proxy_class
+
+
+class ReviewingOE:
+    """OE with a guardrail policy that holds any response naming ``tripwire``.
+
+    A held response is recorded as a halt naming a review; the same request
+    sent again with that review is answered from the reviewer's decision.
+    """
+
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, tripwire: str = "TRIPWIRE"
+    ) -> None:
+        self.decisions: dict[str, str] = {}
+        # Review ids in the order their answered requests reached OE.
+        self.resolved: list[str] = []
+        self._held: dict[str, list[LLMStreamChunk]] = {}
+        to_tool_pod = _tool_pod_answer(None)
+
+        def answer(proxy: Any, call: dict[str, Any]) -> Iterator[LLMStreamChunk]:
+            assert proxy.kwargs["guardrail_review_protocol"]
+            assert proxy.kwargs["sdk_handles_guardrail_review_pause"]
+            pending = call["pending_review"]
+            if pending is not None:
+                review_id = pending.review.review_id
+                self.resolved.append(review_id)
+                if self.decisions[review_id] != "approve":
+                    raise PolicyDeniedException("denied by a reviewer")
+                yield from self._held[review_id]
+                return
+            chunks = list(to_tool_pod(proxy, call))
+            text = "".join(chunk.content or "" for chunk in chunks)
+            if tripwire not in text:
+                yield from chunks
+                return
+            # A replacement attempt replays the recorded halt, so the same
+            # response is the same review.
+            review_id = f"review-{text.split()[-1]}"
+            self._held[review_id] = chunks
+            raise GuardrailReviewPending(
+                GuardrailReviewHalt(
+                    review_id=review_id,
+                    allowed_decisions=["approve", "deny"],
+                    reason="names a restricted claim",
+                ),
+                call["step"],
+                cast(Any, call),
+            )
+
+        self.proxies = fake_proxy_class(answer, preallocate_tools=True)
+        monkeypatch.setattr(secure_model, "SecureLLMProxy", self.proxies)
+
+    def decide(self, review_id: str, decision: str) -> dict[str, Any]:
+        """Record a reviewer's decision; return the answer OE forwards."""
+        self.decisions[review_id] = decision
+        return {"guardrail_review": {"review_id": review_id, "decision": decision}}

@@ -1325,6 +1325,14 @@ class LLMPodStreamEvent(BaseModel):
 class ExecutorCallbackRequest(BaseModel):
     """Callback from AER to OE when execution completes or suspends."""
 
+    attempt_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Originating durable attempt returned by StartAttempt",
+    )
+    attempt_fence: Optional[int] = Field(
+        default=None, ge=1, description="Fence returned with the originating durable attempt"
+    )
     execution_id: str = Field(..., description="Execution identifier")
     status: str = Field(..., description="Status: COMPLETED, SUSPENDED, ERROR")
     suspend_generation: Optional[int] = Field(

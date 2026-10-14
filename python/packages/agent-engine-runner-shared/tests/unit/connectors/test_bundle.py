@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from agent_engine_runner_shared.connectors import load_tool_defs
 from agent_engine_runner_shared.connectors.bundle import (
     CONNECTOR_BUNDLE_PATH_ENV,
     ConnectorBundleError,
@@ -12,6 +13,24 @@ from agent_engine_runner_shared.connectors.bundle import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures/jira.tool_defs.yaml"
+
+
+def test_oauth_metadata_is_explicit_and_not_in_model_schema(tmp_path):
+    """Register the provider key and connector-wide scopes outside model arguments."""
+    index = _write_bundle(tmp_path)
+    path = tmp_path / "jiradc.tool_defs.yaml"
+    document = load_tool_defs(path).model_dump()
+    document["auth"] = {"type": "oauth", "provider_type": "custom-github", "scopes": ["repo"]}
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    bundle = load_connector_bundle(index)
+    for tool in bundle.tools:
+        assert tool.registration_metadata["provider_type"] == "custom-github"
+        assert tool.registration_metadata["scopes"] == ["repo"]
+        assert "provider_type" not in tool.schema
+        assert "authorization" not in tool.schema["inputSchema"]["properties"]
+    metadata = bundle.tools[0].registration_metadata
+    metadata["scopes"].clear()
+    assert bundle.tools[0].registration_metadata["scopes"] == ["repo"]
 
 
 def _write_bundle(tmp_path: Path) -> Path:

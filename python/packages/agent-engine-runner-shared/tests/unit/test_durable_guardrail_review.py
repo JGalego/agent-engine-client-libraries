@@ -28,7 +28,7 @@ from agent_engine_runner_shared.generated.workflow.v1.common_pb2 import (
 from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import AttemptContext
 from agent_engine_runner_shared.hooks import register_suspend_handler
 from agent_engine_runner_shared.models import ToolExecuteResponse
-from agent_engine_runner_shared.secure_llm_proxy import SecureLLMProxy
+from agent_engine_runner_shared.secure_llm_proxy import GuardrailReviewPending, SecureLLMProxy
 from agent_engine_runner_shared.secure_wrapper import (
     GUARDRAIL_REVIEW_INVALID_CODE,
     LLMInvocationError,
@@ -131,6 +131,8 @@ class _Run:
         attempt_id: str,
         *,
         protocol: bool = True,
+        sdk_handles_guardrail_review_pause: bool = False,
+        pending: GuardrailReviewPending | None = None,
         steps_before: int = 0,
         steps: OperationalStepAllocator | None = None,
     ) -> list[Any]:
@@ -144,11 +146,23 @@ class _Run:
             operational_steps=steps,
             durable_memory=self.memory,
             guardrail_review_protocol=protocol,
+            sdk_handles_guardrail_review_pause=sdk_handles_guardrail_review_pause,
         )
         proxy._workflow = self.history  # type: ignore[assignment]
         with attempt_context_scope(_attempt(attempt_id)):
             with patch("agent_engine_runner_shared.secure_llm_proxy.request_oe_approval", self.oe):
-                return list(proxy.stream(MESSAGES, activity_key="llm:task-1:1"))
+                if pending is not None and protocol:
+                    with pytest.raises(GuardrailReviewPending):
+                        list(proxy.stream(MESSAGES, activity_key="llm:task-1:1"))
+                return list(
+                    proxy.stream(
+                        [Message(role="user", content="changed native resume request")]
+                        if pending
+                        else MESSAGES,
+                        activity_key="llm:resolution" if pending else "llm:task-1:1",
+                        pending_review=pending,
+                    )
+                )
 
 
 @pytest.fixture(autouse=True)
@@ -535,3 +549,45 @@ def test_a_pause_is_a_review_wait_only_when_this_attempt_recorded_its_halt(run: 
     # A later attempt starts with nothing recorded.
     with attempt_context_scope(_attempt("attempt-2")):
         assert guardrail_review_wait_id(value) is None
+
+
+def test_sdk_review_pause_receives_recorded_halt_and_reconstructs_native_resolution(
+    run: _Run,
+) -> None:
+    run.oe.return_value = _halt_response()
+    paused = _pause_on_review()
+    with pytest.raises(GuardrailReviewPending) as first:
+        run.stream("attempt-1", sdk_handles_guardrail_review_pause=True)
+    assert paused == []
+    assert run.history.kinds() == [ACTIVITY_OUTCOME_KIND_COMPLETED]
+    run.memory.synchronize_llm.assert_not_called()
+    run.oe.reset_mock()
+    with pytest.raises(GuardrailReviewPending) as replay:
+        run.stream("attempt-2", sdk_handles_guardrail_review_pause=True)
+    run.oe.assert_not_called()
+    assert replay.value.request == first.value.request
+    run.oe.return_value = ToolExecuteResponse(proceed=True, status="success", result=HELD)
+    chunks = run.stream(
+        "attempt-2", sdk_handles_guardrail_review_pause=True, pending=replay.value, steps_before=1
+    )
+    assert "".join(chunk.content or "" for chunk in chunks) == "the held answer"
+    assert run.oe.call_args.kwargs["arguments"] == replay.value.request.model_dump(
+        exclude_none=True
+    )
+    assert run.oe.call_args.kwargs["review_id"] == REVIEW_ID
+    assert len(run.history.recorded) == 2
+    run.oe.reset_mock()
+    run.stream(
+        "attempt-3", sdk_handles_guardrail_review_pause=True, pending=replay.value, steps_before=1
+    )
+    run.oe.assert_not_called()
+
+
+def test_native_review_resolution_requires_durable_protocol(run: _Run) -> None:
+    run.oe.return_value = _halt_response()
+    with pytest.raises(GuardrailReviewPending) as pending:
+        run.stream("attempt-1", sdk_handles_guardrail_review_pause=True)
+    run.oe.reset_mock()
+    with pytest.raises(LLMInvocationError, match="durable review protocol"):
+        run.stream("attempt-2", protocol=False, pending=pending.value)
+    run.oe.assert_not_called()

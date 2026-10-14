@@ -20,9 +20,14 @@ from agents import (
     OpenAIResponsesModel,
     RunConfig,
     Runner,
+    custom_span,
     function_tool,
+    set_trace_processors,
+    set_tracing_disabled,
+    trace,
 )
 from agents.models.default_models import get_default_model_settings
+from agents.tracing import TracingProcessor
 from openai import APIStatusError, AsyncOpenAI
 from openai.types.responses import (
     ResponseFunctionWebSearch,
@@ -35,6 +40,7 @@ from pydantic import BaseModel
 
 from agent_engine_runner_shared.secure_llm_proxy import SecureLLMProxy
 from agent_engine_sdk_openai_agents import (
+    App,
     UnsupportedDurableOpenAIAgentsError,
     secure_model,
 )
@@ -148,7 +154,7 @@ async def test_runner_turn_round_trips_through_the_tool_pod_model(
     ]
     assert [proxy.calls[0]["step"] for proxy in proxy_class.instances] == [1, 2]
     call_item = result.to_input_list()[1]
-    assert (call_item["call_id"], call_item["id"]) == ("call-1", "fc_call-1")
+    assert (call_item["call_id"], call_item["id"]) == ("call-1", "fc_exec-1_call-1")
 
 
 async def _stream(model: SecureModel, **overrides: Any) -> list[Any]:
@@ -193,7 +199,7 @@ async def test_replayed_activity_reproduces_the_same_runner_items(
         outputs.append([item.model_dump() for item in events[-1].response.output])
 
     assert outputs[0] == outputs[1]
-    assert [item["id"] for item in outputs[0]] == ["msg_exec-1_1", "fc_call-1"]
+    assert [item["id"] for item in outputs[0]] == ["msg_exec-1_1", "fc_exec-1_call-1"]
 
 
 @pytest.mark.parametrize(
@@ -215,7 +221,6 @@ async def test_replayed_activity_reproduces_the_same_runner_items(
         ),
         ({"previous_response_id": "resp-0"}, "continuation"),
         ({"conversation_id": "conv-0"}, "continuation"),
-        ({"tracing": ModelTracing.ENABLED}, "tracing"),
         ({"tools": [object()]}, "outside platform tool execution"),
     ],
 )
@@ -231,6 +236,60 @@ async def test_calls_that_would_bypass_oe_fail_before_dispatch(
     with pytest.raises(UnsupportedDurableOpenAIAgentsError, match=match):
         await _stream(SecureModel(llm_id="x", model_name="m"), **overrides)
     assert proxy_class.instances == []
+
+
+async def test_run_that_records_a_trace_is_refused(
+    monkeypatch: pytest.MonkeyPatch, wrapper: FakeWrapper
+) -> None:
+    proxy_class = fake_proxy_class(_fixed_answer(LLMStreamChunk(content="x")))
+    monkeypatch.setattr(secure_model, "SecureLLMProxy", proxy_class)
+    agent = Agent(name="support", model=SecureModel(llm_id="x", model_name="m"))
+    # What an app would have to do: the App switches tracing off when it is
+    # created in the AER.
+    set_tracing_disabled(False)
+    # Nothing to export the trace this run starts.
+    set_trace_processors([])
+    try:
+        with pytest.raises(UnsupportedDurableOpenAIAgentsError, match="tracing"):
+            await Runner.run(agent, "hi")
+    finally:
+        set_tracing_disabled(True)
+    assert proxy_class.instances == []
+
+
+def test_app_switches_sdk_tracing_off_for_the_process() -> None:
+    started: list[str] = []
+
+    class Recorder(TracingProcessor):
+        def on_trace_start(self, trace: Any) -> None:
+            started.append("trace")
+
+        def on_trace_end(self, trace: Any) -> None:
+            pass
+
+        def on_span_start(self, span: Any) -> None:
+            started.append("span")
+
+        def on_span_end(self, span: Any) -> None:
+            pass
+
+        def shutdown(self) -> None:
+            pass
+
+        def force_flush(self) -> None:
+            pass
+
+    set_tracing_disabled(False)
+    set_trace_processors([Recorder()])
+    try:
+        App(app_name="support")
+        # A run the app starts outside an adapter run uses this default.
+        with trace("judge"), custom_span("ask"):
+            pass
+    finally:
+        set_tracing_disabled(True)
+        set_trace_processors([])
+    assert started == []
 
 
 async def test_model_call_outside_an_aer_execution_is_rejected(

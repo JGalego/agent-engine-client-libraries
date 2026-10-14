@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, test, vi } from "vitest";
+import { create } from "@bufbuild/protobuf";
 
 import {
   DRAIN_ABORT_REASON,
@@ -25,6 +26,16 @@ import { ToolServer } from "../../src/server/tool.js";
 import { AERServer } from "../../src/server/aer.js";
 import { RuntimeAgentConfig } from "../../src/agent_config.js";
 import type { ITenantRuntime } from "../../src/server/base.js";
+import {
+  AttemptContextSchema,
+  AttemptHeartbeat,
+  TenantScopeSchema,
+  WorkflowIdentitySchema,
+} from "../../src/workflow/index.js";
+import {
+  clearWorkflowAdapter,
+  registerWorkflowAdapter,
+} from "../../src/hooks.js";
 
 function makeRequest(overrides: Partial<DrainRequest> = {}): DrainRequest {
   return {
@@ -81,6 +92,20 @@ async function waitForNoActiveWork(
   }
   throw new Error("work never settled");
 }
+
+describe("DrainRegistry.drainReason", () => {
+  test("reports the applied drain's reason", () => {
+    const registry = new DrainRegistry();
+    registry.beginWork("exec-1");
+    expect(registry.drainReason("exec-1")).toBeUndefined();
+    registry.apply(makeRequest({ reason: "rolling_restart" }));
+    expect(registry.drainReason("exec-1")).toBe("rolling_restart");
+  });
+
+  test("is undefined for a never-seen execution", () => {
+    expect(new DrainRegistry().drainReason("never-seen")).toBeUndefined();
+  });
+});
 
 describe("DrainRegistry", () => {
   test("unknown execution is delivery_failed", () => {
@@ -608,6 +633,285 @@ describe("AERServer drain wiring", () => {
       delete process.env["PROJECT_ID"];
       if (app) await app.close();
     }
+  });
+
+  /**
+   * Park a turn, drain it over HTTP, and drive the drain to its final
+   * outcome. The final outcome is only recorded after endWork runs, which
+   * follows the execute teardown — so once the drain settles, the
+   * cancelled-turn hook has definitively fired (or not).
+   */
+  async function runAerDrain(
+    agent: unknown,
+    reason: string,
+    configure?: (server: AERServer) => void,
+    executeOverrides: Record<string, unknown> = {},
+    probeWindow?: { entered: Promise<void>; release: () => void },
+  ): Promise<{ reportCallback: ReturnType<typeof vi.fn> }> {
+    const runtime = {
+      ...fakeRuntime({}),
+      orgId: "org-1",
+      projectId: "proj-1",
+      getAgent: () => agent,
+    } as unknown as ITenantRuntime;
+    const server = new AERServer(runtime);
+    configure?.(server);
+    (server as unknown as Record<string, unknown>)["sendStreamChunk"] = vi
+      .fn()
+      .mockResolvedValue(undefined);
+    const reportCallback = vi.fn().mockResolvedValue(undefined);
+    (server as unknown as Record<string, unknown>)["reportCallback"] =
+      reportCallback;
+    process.env["OE_URL"] = "http://oe.test";
+    process.env["APP_ID"] = "ws-1";
+    process.env["ORG_ID"] = "org-1";
+    process.env["PROJECT_ID"] = "proj-1";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    let app;
+    try {
+      app = server.createApp();
+      await app.ready();
+      const execute = app.inject({
+        method: "POST",
+        url: "/execute",
+        payload: {
+          execution_id: "exec-1",
+          platform_api_url: "http://127.0.0.1:9",
+          ...executeOverrides,
+        },
+      });
+      await waitForActiveWork(server.drainRegistry, "exec-1");
+      if (probeWindow !== undefined) await probeWindow.entered;
+      const drained = await app.inject({
+        method: "POST",
+        url: "/drain",
+        payload: makeRequest({
+          reason: reason as DrainRequest["reason"],
+          deadline_at_ms: Date.now() + 2000,
+          workspace_id: "ws-1",
+        }),
+      });
+      expect(drained.statusCode).toBe(202);
+      probeWindow?.release();
+      const finished = await execute;
+      // A drained turn answers the held /execute cleanly: the OE's cancel
+      // path owns the terminal Cancelled settlement, so no error surfaces.
+      expect(finished.statusCode).toBe(200);
+      expect(finished.json().status).toBe("cancelled");
+      expect(
+        (
+          await settled(
+            server.drainRegistry,
+            makeRequest({ reason: reason as DrainRequest["reason"] }),
+          )
+        ).body.outcome,
+      ).toBe("completed");
+    } finally {
+      vi.unstubAllGlobals();
+      delete process.env["OE_URL"];
+      delete process.env["APP_ID"];
+      delete process.env["ORG_ID"];
+      delete process.env["PROJECT_ID"];
+      if (app) await app.close();
+    }
+    return { reportCallback };
+  }
+
+  const hangingAgentWithHook = (hook: ReturnType<typeof vi.fn>) => ({
+    commitCancelledTurn: hook,
+    execute: () =>
+      (async function* () {
+        await new Promise(() => {});
+        yield; // unreachable by construction
+      })(),
+  });
+
+  test("an execution-cancelled drain commits the turn via the agent hook", async () => {
+    const hook = vi.fn().mockResolvedValue(true);
+    await runAerDrain(hangingAgentWithHook(hook), "execution_cancelled");
+    expect(hook).toHaveBeenCalledOnce();
+  });
+
+  test("a rolling-restart drain does not commit the turn", async () => {
+    const hook = vi.fn().mockResolvedValue(true);
+    await runAerDrain(hangingAgentWithHook(hook), "rolling_restart");
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  test("a failing commit does not change the settlement path", async () => {
+    const hook = vi.fn().mockRejectedValue(new Error("mongo down"));
+    await runAerDrain(hangingAgentWithHook(hook), "execution_cancelled");
+    expect(hook).toHaveBeenCalledOnce();
+  });
+
+  test("the cancelled callback carries the rescued checkpoint coordinate", async () => {
+    // OE's terminal guard persists the coordinate for the branch-source
+    // selector; the runner is the only party that knows it.
+    const hook = vi
+      .fn()
+      .mockResolvedValue({ thread_id: "sess-1:ws-1", checkpoint_id: "ck-1" });
+    const { reportCallback } = await runAerDrain(
+      hangingAgentWithHook(hook),
+      "execution_cancelled",
+    );
+    expect(hook).toHaveBeenCalledOnce();
+    const body = reportCallback.mock.calls[0]?.[4] as {
+      status?: string;
+      metadata?: { langgraph_checkpoint?: Record<string, string> };
+    };
+    expect(body?.status).toBe("CANCELLED");
+    expect(body?.metadata?.langgraph_checkpoint).toEqual({
+      thread_id: "sess-1:ws-1",
+      checkpoint_id: "ck-1",
+    });
+  });
+
+  test("a non-object hook return stages no cancelled callback", async () => {
+    const hook = vi.fn().mockResolvedValue(true);
+    const { reportCallback } = await runAerDrain(
+      hangingAgentWithHook(hook),
+      "execution_cancelled",
+    );
+    expect(hook).toHaveBeenCalledOnce();
+    expect(reportCallback).not.toHaveBeenCalled();
+  });
+
+  const durableExecuteIdentity: Record<string, unknown> = {
+    org_id: "org-1",
+    project_id: "proj-1",
+    user_id: "user-1",
+    session_id: "session-1",
+    workspace_id: "ws-1",
+  };
+
+  /** Fresh-worker shape: the workflow adapter appears only when the runtime
+   * materializes the agent — never before — like the production SDK runtimes. */
+  function registerAdapterOnAgentBuild(server: AERServer): void {
+    const runtime = (
+      server as unknown as { runtime: { getAgent: () => unknown } }
+    ).runtime;
+    const original = runtime.getAgent;
+    runtime.getAgent = () => {
+      registerWorkflowAdapter("langgraph", "1");
+      return original();
+    };
+  }
+
+  /** Parked routing probe: entered/release gate for cancel-during-prep tests. */
+  function probeGate() {
+    let enteredResolve!: () => void;
+    let releaseResolve!: () => void;
+    return {
+      entered: new Promise<void>((r) => {
+        enteredResolve = r;
+      }),
+      gate: new Promise<void>((r) => {
+        releaseResolve = r;
+      }),
+      enteredResolve: () => enteredResolve(),
+      release: () => releaseResolve(),
+    };
+  }
+
+  test("a cancel during durable-routing preparation still commits a native turn", async () => {
+    // The drain lands while the admitted request awaits the attempt probe;
+    // the probe then resolves native and teardown commits the turn.
+    const hook = vi.fn().mockResolvedValue(true);
+    const probe = probeGate();
+
+    await runAerDrain(
+      hangingAgentWithHook(hook),
+      "execution_cancelled",
+      (server) => {
+        (server as unknown as Record<string, unknown>)["startDurableAttempt"] =
+          vi.fn(async () => {
+            probe.enteredResolve();
+            await probe.gate;
+            return null; // native routing
+          });
+      },
+      {},
+      { entered: probe.entered, release: probe.release },
+    );
+    expect(hook).toHaveBeenCalledOnce();
+  });
+
+  test("a failed lease for a durable-eligible run writes no native history", async () => {
+    // Fresh worker: the adapter registers inside getAgent, so eligibility
+    // computed before materialization would wrongly read native. The lease
+    // call fails after the cancel landed, leaving the mode unknown.
+    const hook = vi.fn().mockResolvedValue(true);
+    const probe = probeGate();
+    clearWorkflowAdapter();
+    try {
+      await runAerDrain(
+        hangingAgentWithHook(hook),
+        "execution_cancelled",
+        (server) => {
+          registerAdapterOnAgentBuild(server);
+          (server as unknown as Record<string, unknown>)[
+            "startDurableAttempt"
+          ] = vi.fn(async () => {
+            probe.enteredResolve();
+            await probe.gate;
+            throw new Error("oe unreachable");
+          });
+        },
+        durableExecuteIdentity,
+        { entered: probe.entered, release: probe.release },
+      );
+    } finally {
+      clearWorkflowAdapter();
+    }
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  test("a durable attempt never triggers the cancelled-turn commit", async () => {
+    // The gate lives at the call site: the catch runs after
+    // runWithAttemptContext has closed the attempt context, so the adapter's
+    // ambient check would read null for a durable session. durableAttempt
+    // must decide.
+    const hook = vi.fn().mockResolvedValue(true);
+    const attempt = create(AttemptContextSchema, {
+      attemptId: "attempt-1",
+      fencingToken: 8n,
+      ownerId: "owner",
+      workflowIdentity: create(WorkflowIdentitySchema, {
+        tenantScope: create(TenantScopeSchema, {
+          orgId: "org-1",
+          projectId: "proj-1",
+          workspaceId: "ws-1",
+        }),
+        sessionId: "session",
+        executionId: "exec-1",
+      }),
+      heartbeatIntervalMs: 60_000n,
+    });
+    vi.spyOn(AttemptHeartbeat.prototype, "start").mockResolvedValue(undefined);
+    vi.spyOn(AttemptHeartbeat.prototype, "stop").mockResolvedValue(undefined);
+    // Fresh worker: the adapter registers inside getAgent, so eligibility
+    // computed before materialization would wrongly read native for this
+    // durable run — the acquired attempt must veto the native commit.
+    clearWorkflowAdapter();
+    try {
+      await runAerDrain(
+        hangingAgentWithHook(hook),
+        "execution_cancelled",
+        (server) => {
+          registerAdapterOnAgentBuild(server);
+          (server as unknown as Record<string, unknown>)[
+            "startDurableAttempt"
+          ] = vi.fn().mockResolvedValue(attempt);
+        },
+        durableExecuteIdentity,
+      );
+    } finally {
+      clearWorkflowAdapter();
+    }
+    expect(hook).not.toHaveBeenCalled();
   });
 
   test("a drain landing between admission and controller attach is not a timeout", async () => {

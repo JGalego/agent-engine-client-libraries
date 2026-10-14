@@ -490,10 +490,10 @@ def build_test_agent(
       ``build_test_graph`` (same ``llm``/``llms`` arguments and strict
       per-``llm_id`` semantics).
     - ``app.checkpointer()`` returns a fresh in-memory saver instead of
-      ``None``. AER always runs with a real checkpointer, and the adapter's
-      ``invoke()`` path calls ``aget_state`` (which raises without one) for
-      suspend detection — in-memory keeps that faithful with no Mongo
-      dependency. Durable-execution plumbing stays inert (no OE attempt
+      ``None``, using the same checkpoint type allowlist as AER. AER always
+      runs with a real checkpointer, and the adapter's ``invoke()`` path
+      calls ``aget_state`` (which raises without one) for suspend
+      detection — in-memory keeps that faithful with no Mongo dependency. Durable-execution plumbing stays inert (no OE attempt
       context exists in a test).
 
     Everything else about TOOL mode is unchanged: no policy/guardrails,
@@ -523,7 +523,7 @@ def build_test_agent(
         original_checkpointer = app.checkpointer
 
         def _memory_checkpointer() -> Any:
-            return InMemorySaver()
+            return InMemorySaver(serde=app._checkpoint_serializer())
 
         app.checkpointer = _memory_checkpointer
         try:

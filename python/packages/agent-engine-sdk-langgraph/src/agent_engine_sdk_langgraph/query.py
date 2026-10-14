@@ -34,8 +34,6 @@ import logging
 from collections.abc import Callable
 from typing import Any, cast
 
-from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.mongodb import MongoDBSaver
 from agent_engine_sdk.models import (
     LLMToolCall,
     SessionMessage,
@@ -43,6 +41,8 @@ from agent_engine_sdk.models import (
     SessionsSummaryResponse,
     SessionSummary,
 )
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.mongodb import MongoDBSaver
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from .thread_id import (
@@ -153,11 +153,19 @@ class LangGraphQueryPlugin:
         # the messages endpoint returns, so the two always agree (AP-3064).
         # It cannot come from the aggregation: the saver stores checkpoints as
         # serde-encoded blobs, opaque to aggregation operators.
-        counts = await self._collect_message_counts(
+        counts, preview_fallbacks = await self._collect_message_counts(
             [summary.session_id for summary in summaries]
         )
         for summary in summaries:
             summary.message_count = counts.get(summary.session_id, 0)
+            # The writes-derived preview misses sessions whose first human
+            # message only exists in a cancelled-turn checkpoint's channel
+            # values (no checkpoint_writes rows by design); the authoritative
+            # list already loaded for the count carries it.
+            if not summary.first_message_preview:
+                summary.first_message_preview = preview_fallbacks.get(
+                    summary.session_id, ""
+                )
         return SessionsSummaryResponse(sessions=summaries)
 
     async def get_messages_for_session(
@@ -187,7 +195,8 @@ class LangGraphQueryPlugin:
 
         The ``messages`` channel of the most recent checkpoint that carries a
         usable one, plus each message index's first-appearance timestamp.
-        Returns ``None`` when no checkpoint has a usable ``messages`` channel.
+        Returns ``None`` when no checkpoint has a usable ``messages``
+        channel.
 
         Both the messages endpoint and the sessions-list ``message_count``
         derive from this so the two always agree (AP-3064) — ``message_count``
@@ -217,12 +226,18 @@ class LangGraphQueryPlugin:
             return None
 
         _, authoritative_messages = checkpoints_with_messages_newest_first[0]
-        return authoritative_messages, _attribute_first_appearance_timestamps(
-            checkpoints_with_messages_newest_first
+        return (
+            authoritative_messages,
+            _attribute_first_appearance_timestamps(
+                checkpoints_with_messages_newest_first
+            ),
         )
 
-    async def _collect_message_counts(self, session_ids: list[str]) -> dict[str, int]:
-        """Count messages per session from the authoritative message list.
+    async def _collect_message_counts(
+        self, session_ids: list[str]
+    ) -> tuple[dict[str, int], dict[str, str]]:
+        """Count messages per session from the authoritative message list, and
+        capture each session's first human preview while the list is loaded.
 
         Unlike the single-session messages endpoint — where a corrupt or
         unreadable checkpoint rightly surfaces as a 500 — a failed read here
@@ -233,8 +248,14 @@ class LangGraphQueryPlugin:
         Scans run in bounded batches: a sessions-list request can name
         hundreds of sessions, and letting every one open its own checkpoint
         cursor at once would put hundreds of concurrent scans on the DB.
+
+        The preview half exists for sessions whose first human message never
+        produced a checkpoint_writes row — a cancelled turn's rescued message
+        lives only in the synthetic tip's channel values, so the
+        writes-derived preview pipeline has nothing for it.
         """
         counts: dict[str, int] = {}
+        previews: dict[str, str] = {}
         for offset in range(0, len(session_ids), _MESSAGE_COUNT_CONCURRENCY):
             batch = session_ids[offset : offset + _MESSAGE_COUNT_CONCURRENCY]
             results = await asyncio.gather(
@@ -251,7 +272,11 @@ class LangGraphQueryPlugin:
                     counts[session_id] = 0
                     continue
                 counts[session_id] = len(result[0]) if result is not None else 0
-        return counts
+                if result is not None:
+                    preview = _first_human_message_preview(result[0])
+                    if preview:
+                        previews[session_id] = preview
+        return counts, previews
 
     async def _collect_checkpoints_for_thread_ids(
         self, thread_ids: list[str]
@@ -553,7 +578,7 @@ def _to_session_message(
     role = _ROLE_MAP.get(raw_message_type, raw_message_type)
     name = getattr(message, "name", "") or ""
     message_id = getattr(message, "id", "") or f"msg-{session_id}-{message_index}"
-    additional_kwargs = getattr(message, "additional_kwargs", None)
+    additional_kwargs = _json_safe_metadata(getattr(message, "additional_kwargs", None))
     return SessionMessage(
         id=message_id,
         role=role,
@@ -565,7 +590,7 @@ def _to_session_message(
         # ToolMessage.tool_call_id is the id of the assistant tool call this
         # message answers; absent on every other message type.
         tool_call_id=getattr(message, "tool_call_id", None) or None,
-        additional_kwargs=_json_safe_metadata(additional_kwargs),
+        additional_kwargs=additional_kwargs,
     )
 
 
@@ -631,6 +656,15 @@ def _human_content(decoded_message: Any) -> str:
     if getattr(decoded_message, "type", None) != "human":
         return ""
     return _message_text(decoded_message)
+
+
+def _first_human_message_preview(messages: list[Any]) -> str:
+    """First non-empty human message content, truncated to preview length."""
+    for message in messages:
+        content = _human_content(message)
+        if content:
+            return content[:_PREVIEW_MAX_CHARS]
+    return ""
 
 
 def _iso_or_empty(value: Any) -> str:

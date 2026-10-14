@@ -399,6 +399,39 @@ def _install_base_node_run_wrapper() -> None:
     setattr(ADKNode, _BASE_NODE_RUN_WRAPPER_ATTRIBUTE, True)
 
 
+def _reserve_parallel_worker_run_ids(
+    ctx: Context, child: Any, item_count: int
+) -> list[str]:
+    """Reserve ADK run counters while supporting the 2.9 and 2.10 layouts.
+
+    ADK 2.10 moved dynamic run counters from ``Context`` to the workflow
+    scheduler state. The durable IDs remain explicit and non-numeric so they
+    continue to bypass ADK's auto-generated-ID collision checks; advancing the
+    scheduler's counter keeps later auto-generated children from colliding with
+    the preallocated parallel-worker paths.
+    """
+    legacy_counters = getattr(ctx, "_child_run_counters", None)
+    if isinstance(legacy_counters, dict):
+        legacy_counters = cast(dict[str, int], legacy_counters)
+        start = legacy_counters.get(child.name, 0)
+        legacy_counters[child.name] = start + item_count
+        return [f"durable-{start + offset}" for offset in range(1, item_count + 1)]
+
+    scheduler = getattr(ctx, "_workflow_scheduler", None)
+    state = getattr(scheduler, "_state", None)
+    next_run_id = getattr(state, "next_run_id", None)
+    if not callable(next_run_id):
+        raise UnsupportedDurableADKError(
+            "Google ADK durable parallel workers require a supported "
+            "dynamic scheduler counter API"
+        )
+
+    return [
+        f"durable-{next_run_id(child.name, parent_path=ctx.node_path)}"
+        for _ in range(item_count)
+    ]
+
+
 def _install_parallel_worker_run_wrapper() -> None:
     """Reserve repeated configured worker paths before ADK starts tasks."""
     parallel_worker_module = import_module("google.adk.workflow._parallel_worker")
@@ -413,30 +446,36 @@ def _install_parallel_worker_run_wrapper() -> None:
         worker: Any, *, ctx: Context, node_input: Any
     ) -> AsyncGenerator[Any, None]:
         adapter = _CURRENT_ROUTE_ADAPTER.get()
+        child = worker._node
+        normalized_input = node_input
+        unwrap_content_input = getattr(
+            parallel_worker_module, "_unwrap_content_input", None
+        )
+        if callable(unwrap_content_input):
+            from google.genai import types
+
+            if isinstance(node_input, types.Content):
+                normalized_input = unwrap_content_input(node_input, child)
         item_count = (
-            len(cast(list[Any], node_input)) if isinstance(node_input, list) else 1
+            len(cast(list[Any], normalized_input))
+            if isinstance(normalized_input, list)
+            else 1
         )
         if adapter is not None and item_count:
-            child = worker._node
-            child_run_counters = cast(
-                dict[str, int], getattr(ctx, "_child_run_counters")
-            )
-            start = child_run_counters.get(child.name, 0)
             child_boundaries: list[ChildOperationBoundary] = []
             run_ids_by_input: dict[int, list[str]] = {}
             worker_inputs = (
-                cast(list[Any], node_input)
-                if isinstance(node_input, list)
-                else [node_input]
+                cast(list[Any], normalized_input)
+                if isinstance(normalized_input, list)
+                else [normalized_input]
             )
-            for offset, worker_input in enumerate(worker_inputs, start=1):
-                run_id = f"durable-{start + offset}"
+            run_ids = _reserve_parallel_worker_run_ids(ctx, child, item_count)
+            for worker_input, run_id in zip(worker_inputs, run_ids, strict=True):
                 run_ids_by_input.setdefault(id(worker_input), []).append(run_id)
                 child_path = f"{ctx.node_path}/{child.name}@{run_id}"
                 child_boundaries.append(
                     adk_operation_boundaries_from_node_path(child_path)[-1]
                 )
-            child_run_counters[child.name] = start + item_count
             preallocate_child_operation_ordinals(child_boundaries)
             token = _CURRENT_PARALLEL_WORKER_RUN_IDS.set((id(child), run_ids_by_input))
         else:

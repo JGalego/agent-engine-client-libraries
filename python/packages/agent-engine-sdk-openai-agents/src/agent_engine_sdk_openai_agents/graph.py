@@ -18,7 +18,13 @@ from agents import handoffs as sdk_handoffs
 
 from agent_engine_sdk_openai_agents.agent_tools import is_agent_tool, scoped_agent_tool
 from agent_engine_sdk_openai_agents.errors import UnsupportedDurableOpenAIAgentsError
+from agent_engine_sdk_openai_agents.guardrails import run_guardrails_in_order
 from agent_engine_sdk_openai_agents.llm_adapter import RegisteredModel
+from agent_engine_sdk_openai_agents.review import (
+    REVIEW_TOOL_NAME,
+    install_review_tool,
+    is_review_tool,
+)
 from agent_engine_sdk_openai_agents.secure_model import SecureModel
 from agent_engine_sdk_openai_agents.tools import SecureToolInvoker
 from agent_engine_sdk_openai_agents.wire import invocation_options
@@ -53,12 +59,19 @@ def agent_graph(
         # The model routes by name. The Runner only compares the names of the
         # agent it is running, so a clash on an agent reached by a handoff
         # would otherwise surface after earlier agents' model work.
-        names = [tool.name for tool in agent.tools]
+        names = [tool.name for tool in agent.tools if not is_review_tool(tool)]
         for entry, target in zip(agent.handoffs, handoff_targets, strict=True):
             if not isinstance(entry, Handoff):
                 names.append(Handoff.default_tool_name(target))
             elif entry.is_enabled:
                 names.append(entry.tool_name)
+        if REVIEW_TOOL_NAME in names:
+            raise UnsupportedDurableOpenAIAgentsError(
+                f"agent {agent.name!r} has a tool or handoff named "
+                f"{REVIEW_TOOL_NAME!r}, which the platform reserves"
+            )
+        install_review_tool(agent)
+        run_guardrails_in_order(agent)
         shared = sorted({name for name in names if names.count(name) > 1})
         if shared:
             raise UnsupportedDurableOpenAIAgentsError(
@@ -75,22 +88,20 @@ def agent_graph(
         pending.extend((*handoff_targets, *nested))
     for parent, child in agent_tool_edges:
         nested = _within(reachable, child)
+        # A nested run would run them inside a tool call, where the SDK turns
+        # a trip into a message for the calling model.
+        for name in sorted(nested):
+            if agents[name].input_guardrails or agents[name].output_guardrails:
+                raise UnsupportedDurableOpenAIAgentsError(
+                    f"agent {name!r} is used as a tool and has guardrails, which "
+                    "durable OpenAI Agents runs do not support yet"
+                )
         # An agent that can reach itself through an agent tool could nest
         # runs without bound.
         if parent in nested:
             raise UnsupportedDurableOpenAIAgentsError(
                 f"agent {parent!r} is reachable from its own agent tool {child!r}"
             )
-        # Refused here, before any tool runs, rather than when the nested run
-        # first asks for an approval.
-        for name in sorted(nested):
-            for tool in agents[name].tools:
-                if getattr(tool, "needs_approval", False) is not False:
-                    raise UnsupportedDurableOpenAIAgentsError(
-                        f"tool {tool.name!r} needs approval inside the agent tool "
-                        f"{child!r}, which durable OpenAI Agents runs do not "
-                        "support yet"
-                    )
     return agents
 
 
@@ -119,8 +130,9 @@ def _validate(
         )
     registered.validate()
     for tool in agent.tools:
-        if is_agent_tool(tool):
-            # Read and scoped with the rest of the graph, in agent_graph.
+        if is_agent_tool(tool) or is_review_tool(tool):
+            # An agent tool is read and scoped with the rest of the graph, in
+            # agent_graph, which also installed the review tool.
             continue
         # Issued by this app, not only securely wrapped: another App's tool
         # would run that app's callback and policy, which this app's runtime
@@ -148,13 +160,25 @@ def _validate(
                 f"tool {tool.name!r} sets a native timeout; use "
                 "@app.tool(timeout=...) instead"
             )
+        # An approval on an MCP tool will go through the platform's interrupt
+        # bridge; the SDK's approval path is not qualified for these calls.
+        if tool.on_invoke_tool.mcp and tool.needs_approval:
+            raise UnsupportedDurableOpenAIAgentsError(
+                f"MCP tool {tool.name!r} sets needs_approval, which durable "
+                "OpenAI Agents runs do not support for MCP tools yet"
+            )
         if tool.tool_input_guardrails or tool.tool_output_guardrails:
             raise UnsupportedDurableOpenAIAgentsError(
                 f"tool {tool.name!r} guardrails are not supported yet"
             )
+    # The SDK would call the server from this process, outside the Tool Pod
+    # and the platform's credentials and network policy.
+    if agent.mcp_servers:
+        raise UnsupportedDurableOpenAIAgentsError(
+            "durable OpenAI Agents runs do not support Agent.mcp_servers; list "
+            "the server under mcp.servers in agent.yaml and pass app.tools()"
+        )
     unsupported = {
-        "MCP servers": bool(agent.mcp_servers),
-        "guardrails": bool(agent.input_guardrails or agent.output_guardrails),
         "agent hooks": agent.hooks is not None,
         "hosted prompts": agent.prompt is not None,
         "dynamic instructions": callable(agent.instructions),
@@ -183,11 +207,11 @@ def _handoff_target(entry: object) -> Agent[Any]:
         captured
     ):
         # A hand-built or wrapped Handoff, or an SDK whose handoff() differs
-        # from the one this adapter was built against: what the Runner would
-        # invoke cannot be read.
+        # from the ones this adapter recognizes: what the Runner would invoke
+        # cannot be read.
         raise UnsupportedDurableOpenAIAgentsError(
             f"handoff {handoff.tool_name!r} must be built with agents.handoff(...) "
-            "from the openai-agents version this adapter pins"
+            "from an openai-agents version this adapter supports"
         )
     # A filter rewrites history the durable state owns, and a callback or a
     # callable switch would run or decide again on every replay.

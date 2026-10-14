@@ -350,6 +350,9 @@ export class App extends BaseApp {
           name: binding.sdkToolName,
           description,
           schema: binding.inputSchema as never,
+          ...(binding.annotations !== undefined && {
+            metadata: { annotations: binding.annotations },
+          }),
         },
       );
       this.registerToolDefinition({
@@ -1037,6 +1040,7 @@ export class App extends BaseApp {
         name?: string;
         description?: string;
         schema?: unknown;
+        metadata?: Record<string, unknown>;
       };
       const toolName = toolAny.name ?? "anonymous";
       const toolMetadata = this.runtime.getToolMetadata(toolName);
@@ -1096,12 +1100,17 @@ export class App extends BaseApp {
       // DynamicTool (single `input: string` shape) which strips structured
       // tool_call args before reaching the wrapper — every kwarg arrives
       // undefined at the Tool Pod.
+      // Also forward LangChain metadata so MCP annotations (and any other
+      // registration-time metadata) survive AER wrapping for app.getTools().
       const wrapped = lcTool(durableWrapperFunc as never, {
         name: toolName,
         description: toolAny.description ?? "",
         responseFormat: "content_and_artifact",
         ...(toolAny.schema !== undefined && {
           schema: toolAny.schema as never,
+        }),
+        ...(toolAny.metadata !== undefined && {
+          metadata: toolAny.metadata,
         }),
       });
       wrappedTools.push(wrapped as unknown as StructuredTool);

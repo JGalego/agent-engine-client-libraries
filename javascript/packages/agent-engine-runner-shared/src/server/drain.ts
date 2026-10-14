@@ -231,6 +231,11 @@ export class DrainRegistry {
     return this.maxDeadlineMsValue;
   }
 
+  cancellationDeadline(executionId: string): number | null {
+    const drain = this.entries.get(executionId)?.drain;
+    return drain?.reason === "execution_cancelled" ? drain.deadlineAtMs : null;
+  }
+
   /** Reject work for a draining execution without registering it. */
   checkAdmission(executionId: string): void {
     const entry = this.entries.get(executionId);
@@ -394,6 +399,16 @@ export class DrainRegistry {
     if (entry.drain === null || entry.drain.outcome !== null) {
       this.scheduleEviction(executionId, entry);
     }
+  }
+
+  /**
+   * Reason of the drain applied to this execution, if one has landed.
+   * Execute-teardown reads this to tell an execution-cancelled drain (the
+   * turn must still be checkpointed for history) from a rolling restart or
+   * a plain timeout, which leave the checkpoint store alone.
+   */
+  drainReason(executionId: string): DrainRequest["reason"] | undefined {
+    return this.entries.get(executionId)?.drain?.reason;
   }
 
   /** Apply one drain request; idempotent by request_id, coalescing per execution. */

@@ -217,8 +217,11 @@ def _install_scripted_client(server: AERServer, script: list[Any]) -> _ScriptedP
 # Speed up tests: the retry helper sleeps between attempts; collapse to zero.
 @pytest.fixture(autouse=True)
 def _no_backoff_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_sleep = asyncio.sleep
+
     async def _fast_sleep(_seconds: float) -> None:
-        return None
+        # Retained retries must yield even when their backoff is collapsed.
+        await real_sleep(0)
 
     monkeypatch.setattr("agent_engine_runner_shared.server.aer.asyncio.sleep", _fast_sleep)
 
@@ -1482,3 +1485,47 @@ async def test_handle_execute_owner_registration_cleaned_up_on_agent_error() -> 
     # The terminal ERROR callback still preferred the owner replica.
     assert f"{_OWNER}/executor/callback" in post.urls()
     assert server._owner_callback_url == {}  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_old_attempt_terminal_delivery_does_not_suppress_replacement() -> None:
+    sent: list[dict[str, Any]] = []
+
+    async def post(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append(body)
+        return httpx.Response(503 if body["attempt_id"] == "A" else 200)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(post))
+    delivery = CallbackDelivery(AsyncMock(return_value=client))
+    try:
+        await delivery.send(
+            "http://oe",
+            {
+                "execution_id": "same-execution",
+                "status": "ERROR",
+                "error": "old",
+                "attempt_id": "A",
+                "attempt_fence": 1,
+            },
+        )
+        await delivery.send(
+            "http://oe",
+            {
+                "execution_id": "same-execution",
+                "status": "COMPLETED",
+                "result": "new",
+                "attempt_id": "B",
+                "attempt_fence": 2,
+            },
+        )
+        assert any(body["attempt_id"] == "B" for body in sent)
+        assert len(delivery._pending) == 1
+        assert next(iter(delivery._pending.values())).body["attempt_id"] == "A"
+        assert await asyncio.wait_for(
+            delivery.wait_for_terminal("same-execution", attempt_id="B", attempt_fence=2),
+            timeout=0.2,
+        )
+    finally:
+        await delivery.shutdown()
+        await client.aclose()

@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
@@ -20,6 +20,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import StructuredTool
 from langchain_core.tools import tool as lc_tool
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.errors import GraphBubbleUp
 from langgraph.prebuilt.tool_node import msg_content_output
 from agent_engine_sdk import BaseApp, OutputParser, ToolDefinition
@@ -217,6 +218,42 @@ def _checkpointer_timeout_ms(name: str, default_s: float) -> int:
     return int(get_env_float(name, default_s) * 1000)
 
 
+def _checkpoint_allowlist(
+    allowed: Iterable[type | tuple[str, str]] | None,
+) -> tuple[type | tuple[str, str], ...]:
+    # LangGraph reads ``True`` as "construct anything", which is the exact
+    # hole the allowlist closes, so only explicit entries are accepted.
+    if allowed is None:
+        return ()
+    if isinstance(allowed, str) or not isinstance(allowed, Iterable):
+        raise TypeError(
+            "checkpoint_allowed_types must be an iterable of classes or "
+            f"(module, name) string pairs; got {allowed!r}"
+        )
+    entries = tuple(allowed)
+    for entry in entries:
+        is_pair = (
+            isinstance(entry, tuple)
+            and len(entry) == 2
+            and all(isinstance(part, str) for part in entry)
+        )
+        if not (isinstance(entry, type) or is_pair):
+            raise TypeError(
+                "checkpoint_allowed_types entries must be classes or "
+                f"(module, name) string pairs; got {entry!r}"
+            )
+    return entries
+
+
+class _CheckpointSerializer(JsonPlusSerializer):
+    def loads_typed(self, data: tuple[str, bytes]) -> Any:
+        # LangGraph never writes "json", and its reviver ignores the msgpack
+        # allowlist, so a stored "json" tag would bypass it.
+        if data[0] == "json":
+            raise ValueError("refusing to load a 'json' checkpoint payload")
+        return super().loads_typed(data)
+
+
 def _adapter_version() -> str:
     """This package's installed version, used as the workflow adapter version."""
     from importlib.metadata import PackageNotFoundError, version
@@ -279,6 +316,7 @@ class App(BaseApp):
         traces_collection_name: str = "traces",
         enable_memory: bool | None = None,
         org_id: str | None = None,
+        checkpoint_allowed_types: Iterable[type | tuple[str, str]] | None = None,
     ):
         """Initialize the App.
 
@@ -294,7 +332,17 @@ class App(BaseApp):
                 ``ORG_ID`` environment variable, which the platform injects.
                 Passing this argument raises a DeprecationWarning and will be
                 removed in a future release.
+            checkpoint_allowed_types: Custom classes, or ``(module, name)``
+                pairs, that checkpoint loads may reconstruct in addition to
+                LangGraph's built-in safe types. Unlisted types come back as
+                raw data. Each entry is called with stored checkpoint data,
+                so list only types that are safe to construct from it.
+
+        Raises:
+            TypeError: If ``checkpoint_allowed_types`` is not an iterable of
+                classes and ``(module, name)`` string pairs.
         """
+        checkpoint_allowlist = _checkpoint_allowlist(checkpoint_allowed_types)
         if org_id is not None:
             warnings.warn(
                 "App(org_id=...) is deprecated and ignored. "
@@ -330,6 +378,7 @@ class App(BaseApp):
         self._lc_tools: dict[str, Any] = {}
         self._mongo_client: Any | None = None
         self._checkpointer: Any | None = None
+        self._checkpoint_allowed_types = checkpoint_allowlist
         if self._runtime.mode == RuntimeMode.AER:
             self._register_mcp_tools_from_config()
             self._register_connector_tools_from_bundle()
@@ -383,12 +432,22 @@ class App(BaseApp):
         description = (
             binding.description or f"Remote MCP tool {binding.tool_name}"
         ).strip()
+        # Nest server-provided MCP annotations under LangChain
+        # tool.metadata["annotations"]. They are untrusted advisory hints and
+        # must not merge into TenantRuntime / OE execute metadata
+        # (mcp_server / mcp_tool) used for Tool-Pod dispatch.
+        langchain_metadata = (
+            {"annotations": binding.annotations}
+            if binding.annotations is not None
+            else None
+        )
         langchain_tool = StructuredTool.from_function(
             func=make_sync_mcp_tool_callable(binding),
             coroutine=tool_pod_callable,
             name=binding.sdk_tool_name,
             description=description,
             args_schema=binding.input_schema,
+            metadata=langchain_metadata,
         )
 
         self._register_tool_definition(
@@ -1281,7 +1340,11 @@ class App(BaseApp):
                         connect_timeout_ms,
                         socket_timeout_ms,
                     )
-                    native = MongoDBSaver(client, db_name=checkpoint_db)
+                    native = MongoDBSaver(
+                        client,
+                        db_name=checkpoint_db,
+                        serde=self._checkpoint_serializer(),
+                    )
                 except Exception:
                     # DB resolution (fail-closed on empty PROJECT_ID) or
                     # MongoDBSaver construction (bad URI, auth) may raise. Close
@@ -1306,6 +1369,14 @@ class App(BaseApp):
             self._runtime.mode.value,
         )
         return None
+
+    def _checkpoint_serializer(self) -> JsonPlusSerializer:
+        # Without an explicit allowlist (empty means safe types only)
+        # LangGraph constructs any callable a stored checkpoint names, so DB
+        # write access becomes code execution.
+        return _CheckpointSerializer(
+            allowed_msgpack_modules=self._checkpoint_allowed_types
+        )
 
     def close(self) -> None:
         """Release resources held by this App instance.
@@ -1418,6 +1489,9 @@ class App(BaseApp):
                 ),
                 response_format=response_format,
                 handle_tool_error=True,
+                # Forward registration-time LangChain metadata so MCP
+                # annotations survive AER wrapping for app.get_tools().
+                metadata=getattr(tool_obj, "metadata", None),
             )
             wrapped_tools.append(wrapped_tool)
             logger.debug("Wrapped tool: %s", tool_name)

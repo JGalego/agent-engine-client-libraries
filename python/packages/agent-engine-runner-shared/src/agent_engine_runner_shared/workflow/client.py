@@ -68,6 +68,7 @@ __all__ = [
     "ATTEMPT_HEARTBEAT_PATH",
     "ATTEMPT_START_PATH",
     "EXECUTION_COMPLETE_PATH",
+    "CANCELLED_HISTORY_PATH",
     "STEP_FINALIZE_PATH",
     "ActivityDispatch",
     "ActivityReplay",
@@ -75,6 +76,7 @@ __all__ = [
     "StartActivityResult",
     "WorkflowClient",
     "WorkflowClientError",
+    "FinalizedStepEntries",
 ]
 
 # The OE host bridge must register exactly these routes; a renamed server
@@ -88,6 +90,7 @@ ACTIVITY_MEMORY_PATH = "/executor/activity/memory"
 ACTIVITY_HEARTBEAT_PATH = "/executor/activity/heartbeat"
 STEP_FINALIZE_PATH = "/executor/step/finalize"
 EXECUTION_COMPLETE_PATH = "/executor/complete"
+CANCELLED_HISTORY_PATH = "/executor/cancelled-history"
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 
@@ -372,7 +375,15 @@ def _interpret_activity_start_response(
     )
 
 
-def _interpret_finalize_step_response(status_code: int, body: bytes) -> list[StepActivityEntry]:
+class FinalizedStepEntries(list[StepActivityEntry]):
+    """List-compatible finalization receipt carrying OE's accepted state hash."""
+
+    def __init__(self, entries: list[StepActivityEntry], source_state_hash: str | None) -> None:
+        super().__init__(entries)
+        self.source_state_hash = source_state_hash
+
+
+def _interpret_finalize_step_response(status_code: int, body: bytes) -> FinalizedStepEntries:
     _raise_on_error_response(status_code, body, "step finalization")
     try:
         response = parse_read(body.decode() if body else "{}", FinalizeStepResponse())
@@ -381,7 +392,7 @@ def _interpret_finalize_step_response(status_code: int, body: bytes) -> list[Ste
             WORKFLOW_ERROR_CODE_INVALID_ARGUMENT,
             "step finalization response is not valid ProtoJSON",
         ) from error
-    return list(response.entries)
+    return FinalizedStepEntries(list(response.entries), response.source_state_hash or None)
 
 
 def _transport_error(operation: str, error: httpx.TransportError) -> WorkflowClientError:
@@ -459,7 +470,16 @@ class WorkflowClient:
         )
         _raise_on_error_response(response.status_code, response.content, "activity heartbeat")
 
-    def finalize_step(self, command: FinalizeStepCommand) -> list[StepActivityEntry]:
+    def report_cancelled_history(self, payload: str) -> None:
+        """Report an acknowledged prefix without settling or finalizing execution."""
+        response = self._post(
+            CANCELLED_HISTORY_PATH,
+            payload,
+            "cancelled history",
+        )
+        _raise_on_error_response(response.status_code, response.content, "cancelled history")
+
+    def finalize_step(self, command: FinalizeStepCommand) -> FinalizedStepEntries:
         """Commit a root step or return its positioned suspension outcomes."""
         response = self._post(
             STEP_FINALIZE_PATH,
@@ -576,7 +596,7 @@ class AsyncWorkflowClient:
         )
         _raise_on_error_response(response.status_code, response.content, "activity heartbeat")
 
-    async def finalize_step(self, command: FinalizeStepCommand) -> list[StepActivityEntry]:
+    async def finalize_step(self, command: FinalizeStepCommand) -> FinalizedStepEntries:
         """Commit a root step or return its positioned suspension outcomes."""
         response = await self._post(
             STEP_FINALIZE_PATH,
@@ -584,6 +604,15 @@ class AsyncWorkflowClient:
             "step finalization",
         )
         return _interpret_finalize_step_response(response.status_code, response.content)
+
+    async def report_cancelled_history(self, payload: str) -> None:
+        """Report an acknowledged prefix without settling or finalizing execution."""
+        response = await self._post(
+            CANCELLED_HISTORY_PATH,
+            payload,
+            "cancelled history",
+        )
+        _raise_on_error_response(response.status_code, response.content, "cancelled history")
 
     async def complete_execution(self, command: CompleteExecutionCommand) -> None:
         """Commit final state after a successful application invocation."""

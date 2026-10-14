@@ -31,6 +31,7 @@ from agent_engine_runner_shared.generated.workflow.v1.state_pb2 import (
 from agent_engine_runner_shared.workflow import (
     AsyncWorkflowClient,
     SettledExecutionError,
+    current_cancelled_history,
     finalize_current_step_command,
     settle_execution,
 )
@@ -169,6 +170,18 @@ async def resolve_wait_frontier(
 
             if wrapper is not None and wrapper.durable_memory is not None:
                 for suspend, outcome in zip(suspends, ordered_outcomes, strict=True):
+                    if suspend.review is not None:
+                        await asyncio.to_thread(
+                            wrapper.durable_memory.acknowledge,
+                            wrapper.workflow,
+                            ActivityContext(
+                                workflow_identity=outcome.workflow_identity,
+                                activity_id=outcome.activity_id,
+                                attempt_id=outcome.attempt_id,
+                                fencing_token=outcome.fencing_token,
+                            ),
+                        )
+                        continue
                     await asyncio.to_thread(
                         wrapper.durable_memory.synchronize_tool,
                         wrapper.workflow,
@@ -184,7 +197,19 @@ async def resolve_wait_frontier(
                         tool_name=suspend.kind,
                     )
             snapshot = session_to_state_snapshot(session)
-            await client.finalize_step(finalize_current_step_command(attempt, snapshot))
+            settled = await client.finalize_step(
+                finalize_current_step_command(attempt, snapshot)
+            )
+            history = current_cancelled_history.get()
+            if history is not None and history.matches(attempt):
+                # The settled step is the last acknowledged root. Retain it so a
+                # later Stop reports the completed steps, and re-select the opener
+                # from this snapshot so the report carries the ADK user message's
+                # own id instead of the request-fallback id.
+                history.normalized_input(snapshot)
+                history.acknowledge(
+                    snapshot, step_ordinal, getattr(settled, "source_state_hash", None)
+                )
     except WorkflowClientError as error:
         if error.code == WORKFLOW_ERROR_CODE_CONFLICT:
             raise UnsupportedDurableADKError(

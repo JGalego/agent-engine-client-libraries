@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from typing import Any, cast
+from uuid import uuid4
 
-from langchain_core.runnables import RunnableConfig
-from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import (
-    Command,
-    Interrupt,
-    StreamMode,
+from agent_engine_runner_shared.custom_events import custom_event_transport
+from agent_engine_runner_shared.execution import AgentExecutionResult
+from agent_engine_runner_shared.workflow import (
+    DurableActivitySuspended,
+    current_attempt_context,
 )
 from agent_engine_sdk import (
     AgentInput,
@@ -29,18 +30,33 @@ from agent_engine_sdk import (
     RequestContext,
     StreamEvent,
 )
-from agent_engine_runner_shared.execution import AgentExecutionResult
+from langchain_core.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import (
+    Command,
+    Interrupt,
+    Overwrite,
+    StreamMode,
+)
 from pydantic import JsonValue
 
+from agent_engine_runner_shared.workflow import (
+    CancelledHistory,
+    current_cancelled_history,
+)
+from agent_engine_sdk_langgraph.cancelled_turn import (
+    commit_cancelled_turn as commit_cancelled_turn_checkpoint,
+)
 from agent_engine_sdk_langgraph.checkpoint_branch import (
     branch_point_from_metadata,
     checkpoint_metadata,
     initialize_checkpoint_branch,
 )
-from agent_engine_sdk_langgraph.durable_subgraphs import DurableSubgraphResolver
 from agent_engine_sdk_langgraph.durable_message_identity import (
     install_durable_message_identity,
 )
+from agent_engine_sdk_langgraph.durable_subgraphs import DurableSubgraphResolver
 from agent_engine_sdk_langgraph.execution_session import (
     ExecutionSession,
     execution_session,
@@ -53,12 +69,14 @@ from agent_engine_sdk_langgraph.hooks import (
 from agent_engine_sdk_langgraph.messages import (
     find_last_ai_content,
     lc_messages_to_platform,
+    lc_to_workflow_message,
 )
 from agent_engine_sdk_langgraph.output_parser import (
     DisabledCustomEventTransport,
     OutputParserBinding,
     emit_parser_stream_error,
 )
+from agent_engine_sdk_langgraph.platform_checkpointer import PlatformCheckpointer
 from agent_engine_sdk_langgraph.session_fork import wrap_session_fork_update_state
 from agent_engine_sdk_langgraph.stream_scope import (
     PostTerminalDrain,
@@ -71,8 +89,6 @@ from agent_engine_sdk_langgraph.subagent_stream import (
     source_from_namespace,
 )
 from agent_engine_sdk_langgraph.suspend import suspend_event
-from agent_engine_runner_shared.custom_events import custom_event_transport
-from agent_engine_runner_shared.workflow import DurableActivitySuspended
 
 __all__ = [
     "GraphInput",
@@ -83,6 +99,56 @@ __all__ = [
 ]
 
 _logger = logging.getLogger(__name__)
+
+_TURN_MESSAGE_ID_METADATA_KEY = "agent_engine_turn_message_id"
+
+
+def _record_turn_message_id(ctx: RequestContext, message_id: str) -> None:
+    """Record the turn-opening message id where the teardown hook reads it.
+
+    ctx is the one object that reaches both the preamble and the teardown
+    hook; the hook pops the key when it consumes it.
+    """
+    metadata = ctx.metadata if isinstance(ctx.metadata, dict) else None
+    if metadata is None:
+        try:
+            ctx.metadata = {}
+        except Exception:
+            return  # immutable ctx: teardown appends a fresh opener
+        metadata = ctx.metadata
+    metadata[_TURN_MESSAGE_ID_METADATA_KEY] = message_id
+
+
+def _stash_turn_message_id(ctx: RequestContext, graph_input: Any) -> None:
+    """Record the turn-opening message id for the cancelled-turn commit at teardown.
+
+    Identity, not prompt text: a prepare_input hook may rewrite content, so the
+    teardown hook must not re-discover the message by comparing strings. When
+    the builder left the opener id-less (hooks are not required to set ids),
+    assign one first — LangGraph would only mint it inside the run, too late to
+    capture here. A fresh turn always opens a new user message; a resume turn
+    opens none, so the teardown commit recovers the opener already persisted
+    instead (``cancelled_turn.commit_cancelled_turn``).
+    """
+    messages = graph_input.get("messages") if isinstance(graph_input, dict) else None
+    if isinstance(messages, Overwrite):
+        # A hook may wrap its list in Overwrite; the opener the graph persists
+        # lives inside it.
+        messages = messages.value
+    if not isinstance(messages, list):
+        return
+    for message in reversed(messages):
+        if getattr(message, "type", None) != "human":
+            continue
+        message_id = getattr(message, "id", None)
+        if not message_id:
+            try:
+                message.id = f"input:{uuid4()}"
+            except Exception:
+                return  # unassignable stand-in: teardown appends a fresh opener
+            message_id = message.id
+        _record_turn_message_id(ctx, message_id)
+        return
 
 
 class InternalStreamError(Exception):
@@ -218,6 +284,35 @@ class LangGraphBaseAgent(BaseAgent):
             stream=lambda: self.stream(ctx, input),
         )
 
+    @contextmanager
+    def cancelled_history_scope(
+        self, ctx: RequestContext, input: AgentInput
+    ) -> Iterator[CancelledHistory]:
+        """Expose cancellation capture without a runner dependency on LangGraph."""
+        del ctx
+        attempt = current_attempt_context()
+        if attempt is None:
+            raise RuntimeError("cancellation history requires an OE attempt")
+        payload = input.payload if isinstance(input.payload, dict) else {}
+        history = CancelledHistory(
+            attempt,
+            lc_to_workflow_message(
+                HumanMessage(
+                    content=str(payload.get("message", "")),
+                    id=f"durable-input:{attempt.workflow_identity.execution_id}",
+                )
+            ),
+        )
+        token = current_cancelled_history.set(history)
+        try:
+            yield history
+        finally:
+            current_cancelled_history.reset(token)
+            history.clear()
+            checkpointer = self._graph.checkpointer
+            if isinstance(checkpointer, PlatformCheckpointer):
+                checkpointer.release_scratch(attempt)
+
     def _execution_session(self) -> ExecutionSession:
         return execution_session(
             self._graph,
@@ -228,6 +323,63 @@ class LangGraphBaseAgent(BaseAgent):
             use_custom_parser=self._use_custom_parser,
         )
 
+    async def commit_cancelled_turn(
+        self, ctx: RequestContext, input: AgentInput
+    ) -> "dict[str, str] | None":
+        """Checkpoint the cancelled turn so session history can serve it.
+
+        Invoked by runner-shared when an execution-cancelled drain tears down
+        invoke/stream. No-op for durable sessions: their history is OE-owned
+        and scratch checkpoints are discarded by design. The is_durable check
+        is a backstop — the caller gates on the attempt it started, because by
+        teardown the attempt context may already be closing.
+
+        Returns the committed checkpoint's coordinate (``thread_id`` +
+        ``checkpoint_id``) so the runner can report it to OE — the branch
+        source selector needs it to fork from a session whose only checkpoint
+        is this rescued marker — or ``None`` when nothing was committed.
+        """
+        session = self._execution_session()
+        if session.is_durable:
+            return None
+        config = session.build_config(ctx)
+        config.get("configurable", {}).pop("checkpoint_id", None)  # tip, not a pin
+        checkpointer = self._graph.checkpointer
+        saver = getattr(checkpointer, "native", None) or checkpointer
+        if saver is None or not hasattr(saver, "aget_tuple"):
+            return None  # stateless graph (no Mongo store): nothing to commit
+        payload = input.payload if isinstance(input.payload, dict) else {}
+        user_message = str(payload.get("message", "") or "")
+        if not user_message:
+            return None
+        metadata = ctx.metadata if isinstance(ctx.metadata, dict) else None
+        turn_message_id = (
+            metadata.pop(_TURN_MESSAGE_ID_METADATA_KEY, None)
+            if metadata is not None
+            else None
+        )
+        thread_id = str((config.get("configurable") or {}).get("thread_id") or "")
+        await commit_cancelled_turn_checkpoint(
+            saver,
+            thread_id=thread_id,
+            user_message=user_message,
+            turn_message_id=(
+                turn_message_id if isinstance(turn_message_id, str) else None
+            ),
+            node_names=self._graph.get_graph().nodes.keys(),
+            resume=bool(ctx.resume),
+        )
+        # The synthetic tip IS the just-written checkpoint: read its id back
+        # rather than threading it through the commit's message-id return.
+        tip_reader: Any = saver  # the guard above established aget_tuple
+        tip = await tip_reader.aget_tuple({"configurable": {"thread_id": thread_id}})
+        if tip is None:
+            return None
+        return {
+            "thread_id": thread_id,
+            "checkpoint_id": str(tip.checkpoint["id"]),
+        }
+
     async def _prepare_run(
         self,
         ctx: RequestContext,
@@ -236,6 +388,8 @@ class LangGraphBaseAgent(BaseAgent):
     ) -> tuple[Any, RunnableConfig]:
         """Shared invoke/stream preamble: input, config, branch, fence, seed."""
         graph_input = session.build_graph_input(ctx, input)
+        if not ctx.resume:
+            _stash_turn_message_id(ctx, graph_input)
         config = session.build_config(ctx)
         # HITL resume continues a thread that already received any branch copy.
         # Clients often still send langgraph_branch_point; do not copy again.

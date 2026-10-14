@@ -36,6 +36,7 @@
     - [tools()](#api-tools)
     - [warmUp()](#api-warmup)
   - [LangGraphBaseAgent](#api-langgraphbaseagent)
+    - [commitCancelledTurn()](#api-commitcancelledturn)
     - [execute()](#api-execute-1)
     - [invoke()](#api-invoke)
     - [resume()](#api-resume)
@@ -1073,6 +1074,53 @@ The tenant thread-id hook, or null (Python `_resolve_thread_id` parity).
 [`ResolveThreadId`](#api-resolvethreadid-2) \| `null`
 
 #### Methods
+
+<a id="api-commitcancelledturn"></a>
+
+##### commitCancelledTurn()
+
+```ts
+commitCancelledTurn(ctx, input): Promise<
+  | {
+  checkpoint_id: string;
+  thread_id: string;
+}
+| null>;
+```
+
+Checkpoint the cancelled turn so session history can serve it.
+Invoked by runner-shared when an execution-cancelled drain tears down
+invoke/stream. No-op for durable sessions: their history is OE-owned and
+scratch checkpoints are discarded by design. The attempt-context check is
+a backstop — the caller gates on the attempt it started, because by
+teardown the attempt context may already be closed.
+
+Returns the committed checkpoint's coordinate (`thread_id` +
+`checkpoint_id`) so the runner can report it to OE — the branch-source
+selector needs it to fork from a session whose only checkpoint is this
+rescued marker — or null when nothing was committed.
+
+**Parameters**
+
+| Parameter | Type |
+| :------ | :------ |
+| `ctx` | `RequestContext` |
+| `input` | `AgentInput` |
+
+**Returns**
+
+`Promise`\<
+  \| \{
+  `checkpoint_id`: `string`;
+  `thread_id`: `string`;
+\}
+  \| `null`\>
+
+**Implementation of**
+
+```ts
+BaseAgent.commitCancelledTurn
+```
 
 <a id="api-execute-1"></a>
 

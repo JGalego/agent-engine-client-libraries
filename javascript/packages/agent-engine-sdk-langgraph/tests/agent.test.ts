@@ -459,6 +459,9 @@ describe("native execution-session input", () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0]).toBeInstanceOf(HumanMessage);
     expect(msgs[0]?.content).toBe("Hello");
+    // The id is assigned at build time so a cancelled-turn commit at teardown
+    // can identify this exact message by identity, not content.
+    expect(msgs[0]?.id).toMatch(/^input:/);
     expect(result["user_id"]).toBe("user-1");
     expect(result["session_id"]).toBe("session-1");
   });

@@ -139,7 +139,9 @@ class _Fixture:
             "agent_engine_sdk_adk.execution_session.current_attempt_context",
             lambda: attempt or _attempt(),
         )
-        self.agent = ADKBaseAgent(adk_agent=MagicMock(), app_name="app")
+        self.agent = ADKBaseAgent(
+            adk_agent=MagicMock(retry_config=None), app_name="app"
+        )
         monkeypatch.setattr(
             "agent_engine_sdk_adk.agent.complete_durable_execution", _complete
         )

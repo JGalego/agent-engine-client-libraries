@@ -118,7 +118,7 @@ def _catalog_override(auth: Auth | None) -> dict[str, Any] | None:
         return None
     if auth.type == "none":
         return {}
-    if auth.type == "bearer":
+    if auth.type in ("bearer", "oauth"):
         return {"type": "bearer", **({"headers": auth.headers} if auth.headers else {})}
     if auth.type == "basic":
         return {"type": "basic", **({"headers": auth.headers} if auth.headers else {})}

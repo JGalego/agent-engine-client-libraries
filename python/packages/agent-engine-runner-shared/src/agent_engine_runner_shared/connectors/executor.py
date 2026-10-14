@@ -27,6 +27,7 @@ from agent_engine_runner_shared.connectors.definitions import (
     validate_segment,
     validate_url,
 )
+from agent_engine_runner_shared.models import ToolAuthorization
 from agent_engine_runner_shared.utils import tenant_env_vars
 
 __all__ = ["DEFAULT_EXECUTION_TIMEOUT_SECONDS", "ConnectorExecutor"]
@@ -101,7 +102,11 @@ class ConnectorExecutor:
         self._transport.close()
 
     def _prepare_request(
-        self, tool: Operation, arguments: dict[str, Any], env: Mapping[str, str] | None
+        self,
+        tool: Operation,
+        arguments: dict[str, Any],
+        env: Mapping[str, str] | None,
+        authorization: ToolAuthorization | None,
     ) -> tuple[
         httpx.URL,
         dict[str, str],
@@ -178,7 +183,7 @@ class ConnectorExecutor:
             ]
             if pairs:
                 headers["Cookie"] = "; ".join(pairs)
-        base_url, auth_query, has_path_auth = self._apply_auth(headers, query, env)
+        base_url, auth_query, has_path_auth = self._apply_auth(headers, query, env, authorization)
         content, content_type = self._request_body(tool, arguments)
         if content_type:
             headers["Content-Type"] = content_type
@@ -200,8 +205,9 @@ class ConnectorExecutor:
         headers: dict[str, str],
         query: list[tuple[str, Any]],
         env: Mapping[str, str] | None,
+        authorization: ToolAuthorization | None,
     ) -> tuple[str, list[tuple[str, str]], bool]:
-        """Place materialized credentials exactly where the definition declares them.
+        """Attach explicit delegated authorization or the configured static credentials.
 
         Query credentials are returned so same-origin redirects can preserve them.
         Path-authenticated requests reject redirects because moving the credential
@@ -210,6 +216,18 @@ class ConnectorExecutor:
         auth = self._definitions.auth
         base_url = self._definitions.source.base_url.rstrip("/")
         if not auth or auth.type == "none":
+            return base_url, [], False
+
+        if auth.type == "oauth":
+            # Delegated calls must never fall back to a process/tenant secret;
+            # the existing OE gate binds this authorization to the saved user.
+            token = authorization.token if authorization else None
+            if not token or any(
+                ord(character) <= 32 or ord(character) >= 127 for character in token
+            ):
+                raise ValueError("delegated connector token is missing or invalid")
+            headers["Authorization"] = f"Bearer {token}"
+            headers.update(auth.headers or {})
             return base_url, [], False
 
         secrets = env if env is not None else tenant_env_vars()
@@ -304,13 +322,19 @@ class ConnectorExecutor:
         return None, None
 
     def execute(
-        self, name: str, arguments: dict[str, Any], *, env: Mapping[str, str] | None = None
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        env: Mapping[str, str] | None = None,
+        authorization: ToolAuthorization | None = None,
     ) -> str:
         """Execute a named compiled operation and return bounded UTF-8 response text.
 
         Invalid definitions/arguments/secrets raise ValueError before dispatch.
         HTTP and transport failures use httpx exceptions understood by ToolAPIError.
         Only GET/HEAD/OPTIONS retry 429/503; writes are never automatically replayed.
+        OAuth requires explicit request-local authorization; static modes ignore it.
         """
         deadline = time.monotonic() + self._timeout_seconds
         tool = self._operations.get(name)
@@ -318,7 +342,7 @@ class ConnectorExecutor:
             raise ValueError("unknown connector tool")
         try:
             url, headers, content, auth_query, has_path_auth = self._prepare_request(
-                tool, arguments, env
+                tool, arguments, env, authorization
             )
         except RecursionError:
             # Pathological nesting exhausts the interpreter stack in the

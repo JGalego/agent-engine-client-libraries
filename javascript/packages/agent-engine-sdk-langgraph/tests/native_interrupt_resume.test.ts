@@ -1,6 +1,6 @@
 /** Real-LangGraph coverage for native interrupt suspend and resume. */
 
-import { AIMessage } from "@langchain/core/messages";
+import { AIMessage, type BaseMessage } from "@langchain/core/messages";
 import {
   Command,
   END,
@@ -27,6 +27,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { LangGraphBaseAgent } from "../src/agent.js";
+import { CANCELLED_TURN_MESSAGE_KWARG } from "../src/cancelled_turn.js";
 import { App } from "../src/runtime.js";
 
 const input: AgentInput = { payload: { message: "start" } };
@@ -94,6 +95,36 @@ function singleInterruptAgent(
   return new LangGraphBaseAgent(graph as never);
 }
 
+/** gate (real HITL interrupt) → step_one (intermediate message) → gated
+ * (blocks). A resume runs step_one, commits it, then parks in `gated` — the
+ * window in which a Stop must still recover the persisted opener. */
+function gatedResumeAgent(
+  received: JsonValue[],
+  onEnter: () => void,
+  wait: Promise<void>,
+): LangGraphBaseAgent {
+  const graph = new StateGraph(MessagesAnnotation)
+    .addNode("gate", async () => {
+      const answer = interrupt("question") as JsonValue;
+      received.push(answer);
+      return {};
+    })
+    .addNode("step_one", async () => ({
+      messages: [new AIMessage({ content: "step one", id: "a-1" })],
+    }))
+    .addNode("gated", async () => {
+      onEnter();
+      await wait;
+      return { messages: [new AIMessage({ content: "step two", id: "a-2" })] };
+    })
+    .addEdge(START, "gate")
+    .addEdge("gate", "step_one")
+    .addEdge("step_one", "gated")
+    .addEdge("gated", END)
+    .compile({ checkpointer: new MemorySaver() });
+  return new LangGraphBaseAgent(graph as never);
+}
+
 const jsonFixtures: JsonValue[] = [
   "approve?",
   42,
@@ -137,6 +168,172 @@ describe("LangGraphBaseAgent native interrupt resume", () => {
 
     expect(events.map((event) => event.event)).toEqual(["result"]);
     expect(received).toEqual(["approved"]);
+  });
+
+  it("stamps the persisted opener when a native resume is cancelled", async () => {
+    // A resume opens no new user message: the cancel must stamp the opener the
+    // first execution persisted, not append a second copy of the prompt.
+    const received: JsonValue[] = [];
+    const agent = singleInterruptAgent("question", received);
+    const sessionId = "resume-cancel";
+    const { metadata } = await suspend(agent, sessionId);
+
+    // OE dispatches exec.Message even on resume, so the payload carries the
+    // original prompt.
+    const resumeInput: AgentInput = {
+      payload: { message: "the original prompt" },
+    };
+    const resumeCtx: RequestContext = {
+      sessionId,
+      resume: true,
+      resumeData: "approved",
+      metadata,
+    };
+    await collect(agent.stream(resumeCtx, resumeInput));
+
+    const coordinate = await agent.commitCancelledTurn(resumeCtx, resumeInput);
+    if (coordinate === null) {
+      throw new Error("expected a cancelled-turn coordinate");
+    }
+
+    const saver = agent.compiledGraph.checkpointer as unknown as MemorySaver;
+    const tip = await saver.getTuple({
+      configurable: { thread_id: coordinate.thread_id },
+    });
+    const messages = mustGet(tip).checkpoint.channel_values[
+      "messages"
+    ] as BaseMessage[];
+    const humans = messages.filter((message) => message.getType() === "human");
+    expect(humans).toHaveLength(1);
+    expect(
+      (humans[0]?.additional_kwargs as Record<string, unknown>)[
+        CANCELLED_TURN_MESSAGE_KWARG
+      ],
+    ).toBe(true);
+  });
+
+  it("stamps the persisted opener when a resume is cancelled during preparation", async () => {
+    // The Stop beats the resumed step: the commit recovers the opener from the
+    // checkpoint it already loaded, so no interruptible lookup can miss it.
+    const received: JsonValue[] = [];
+    const agent = singleInterruptAgent("question", received);
+    const sessionId = "resume-cancel-prep";
+    await suspend(agent, sessionId);
+
+    const resumeInput: AgentInput = {
+      payload: { message: "the original prompt" },
+    };
+    const resumeCtx: RequestContext = {
+      sessionId,
+      resume: true,
+      resumeData: "approved",
+    };
+    // No resume stream runs — the cancel beats the resumed step.
+    const coordinate = await agent.commitCancelledTurn(resumeCtx, resumeInput);
+    if (coordinate === null) {
+      throw new Error("expected a cancelled-turn coordinate");
+    }
+
+    const saver = agent.compiledGraph.checkpointer as unknown as MemorySaver;
+    const tip = await saver.getTuple({
+      configurable: { thread_id: coordinate.thread_id },
+    });
+    const messages = mustGet(tip).checkpoint.channel_values[
+      "messages"
+    ] as BaseMessage[];
+    const humans = messages.filter((message) => message.getType() === "human");
+    expect(humans).toHaveLength(1);
+    expect(
+      (humans[0]?.additional_kwargs as Record<string, unknown>)[
+        CANCELLED_TURN_MESSAGE_KWARG
+      ],
+    ).toBe(true);
+  });
+
+  it("stamps the persisted opener when a resume is cancelled mid-continuation", async () => {
+    // The continuation is still running when Stop lands: step_one has
+    // committed its intermediate message and the next step is gated. The
+    // teardown commit must recover the persisted opener and retain the
+    // completed step, in order.
+    const received: JsonValue[] = [];
+    let onEnter: () => void = () => {};
+    const entered = new Promise<void>((resolve) => {
+      onEnter = resolve;
+    });
+    let abortGated: (reason: unknown) => void = () => {};
+    const gatedWait = new Promise<void>((_resolve, reject) => {
+      abortGated = reject;
+    });
+    const agent = gatedResumeAgent(received, onEnter, gatedWait);
+    const sessionId = "resume-mid-continuation";
+    const { metadata } = await suspend(agent, sessionId);
+
+    const resumeInput: AgentInput = {
+      payload: { message: "the original prompt" },
+    };
+    const resumeCtx: RequestContext = {
+      sessionId,
+      resume: true,
+      resumeData: "approved",
+      metadata,
+    };
+
+    // Drive the resumed continuation until the gated step is executing.
+    const pump = (async () => {
+      for await (const event of agent.stream(resumeCtx, resumeInput)) {
+        void event; // consume; the gated step blocks before the stream completes
+      }
+    })();
+    await entered;
+
+    // Stop tears the invocation down mid-continuation, then it settles.
+    abortGated(new Error("stopped"));
+    await pump.catch(() => undefined);
+
+    const coordinate = await agent.commitCancelledTurn(resumeCtx, resumeInput);
+    if (coordinate === null) {
+      throw new Error("expected a cancelled-turn coordinate");
+    }
+
+    const saver = agent.compiledGraph.checkpointer as unknown as MemorySaver;
+    const tip = await saver.getTuple({
+      configurable: { thread_id: coordinate.thread_id },
+    });
+    const messages = mustGet(tip).checkpoint.channel_values[
+      "messages"
+    ] as BaseMessage[];
+    expect(messages.map((m) => m.content)).toEqual(["start", "step one"]);
+    const humans = messages.filter((message) => message.getType() === "human");
+    expect(humans).toHaveLength(1);
+    expect(humans[0]?.content).toBe("start");
+    expect(
+      (humans[0]?.additional_kwargs as Record<string, unknown>)[
+        CANCELLED_TURN_MESSAGE_KWARG
+      ],
+    ).toBe(true);
+
+    // A fresh turn preserves the stopped opener and the completed step.
+    await collect(
+      agent.stream({ sessionId } as RequestContext, {
+        payload: { message: "next" },
+      }),
+    );
+    const after = await saver.getTuple({
+      configurable: { thread_id: coordinate.thread_id },
+    });
+    const afterMessages = mustGet(after).checkpoint.channel_values[
+      "messages"
+    ] as BaseMessage[];
+    expect(
+      afterMessages
+        .filter((m) => m.getType() === "human")
+        .map((m) => m.content),
+    ).toEqual(["start", "next"]);
+    expect(
+      (afterMessages[0]?.additional_kwargs as Record<string, unknown>)[
+        CANCELLED_TURN_MESSAGE_KWARG
+      ],
+    ).toBe(true);
   });
 
   it("delivers a legacy human_review dict as one interrupt answer", async () => {

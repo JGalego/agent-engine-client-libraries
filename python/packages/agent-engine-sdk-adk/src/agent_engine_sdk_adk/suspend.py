@@ -13,6 +13,13 @@ from google.genai import types
 from pydantic import BaseModel, Field, JsonValue
 
 from agent_engine_runner_shared.workflow import ChildOperationBoundary
+from agent_engine_sdk_adk.guardrail_review import (
+    REVIEW_FUNCTION_NAME,
+    ReviewWait,
+    operation_key,
+    review_wait_from_event,
+)
+from agent_engine_sdk_adk.route import adk_suspension_operation_path_scope
 
 __all__ = [
     "REQUEST_CONFIRMATION_FUNCTION_CALL_NAME",
@@ -133,12 +140,13 @@ class AdkSuspend:
     The durable caller-facing interrupt id is the separate OE activity id.
     """
 
-    kind: Literal["adk_request_input", "adk_request_confirmation"]
+    kind: Literal["adk_request_input", "adk_request_confirmation", "guardrail_review"]
     function_call_id: str
     value: dict[str, Any]
     semantic_input: dict[str, Any]
     function_name: str
     provenance: SuspendProvenance
+    review: ReviewWait | None = None
 
 
 def extract_suspends(
@@ -160,6 +168,36 @@ def extract_suspends(
     whose name matches the tool the model called.
     """
     indexed_calls = _indexed_function_calls(event)
+    review = review_wait_from_event(event)
+    if review is not None:
+        provenance = SuspendProvenance(
+            node_path=event.node_info.path or "",
+            branch=event.branch or "",
+            part_index=0,
+            operation_boundaries=tuple(operation_boundaries),
+        )
+        with adk_suspension_operation_path_scope(operation_boundaries):
+            if operation_key() != review.operation:
+                raise SuspendTranslationError("ADK review changed its owning operation")
+        value = {"guardrail_review": review.review.model_dump(mode="json")}
+        return [
+            AdkSuspend(
+                kind="guardrail_review",
+                function_call_id=review.call_id,
+                function_name=REVIEW_FUNCTION_NAME,
+                value=value,
+                semantic_input={
+                    "kind": "guardrail_review",
+                    "review_id": review.review.review_id,
+                    "provenance": {
+                        "node_path": provenance.node_path,
+                        "branch": provenance.branch,
+                    },
+                },
+                provenance=provenance,
+                review=review,
+            )
+        ]
     function_calls = [call for _, call in indexed_calls]
     if any(
         call.name == REQUEST_CREDENTIAL_FUNCTION_CALL_NAME for call in function_calls
@@ -190,8 +228,18 @@ def extract_suspends(
 
 
 def _answer_schema(
-    kind: Literal["adk_request_input", "adk_request_confirmation"],
+    kind: Literal["adk_request_input", "adk_request_confirmation", "guardrail_review"],
 ) -> dict[str, Any]:
+    if kind == "guardrail_review":
+        return {
+            "type": "object",
+            "required": ["decision"],
+            "properties": {
+                "decision": {"enum": ["approve", "deny"]},
+                "reviewer_notes": {"type": "string"},
+            },
+            "additionalProperties": False,
+        }
     if kind == REQUEST_CONFIRMATION_FUNCTION_CALL_NAME:
         answer: dict[str, Any] = {
             "type": "object",
@@ -205,7 +253,9 @@ def _answer_schema(
 
 def frontier_resume_schema(
     interrupt_ids: Sequence[str],
-    kinds: Sequence[Literal["adk_request_input", "adk_request_confirmation"]],
+    kinds: Sequence[
+        Literal["adk_request_input", "adk_request_confirmation", "guardrail_review"]
+    ],
 ) -> dict[str, Any]:
     """Require one typed resume value for every advertised OE activity id."""
     if not interrupt_ids or len(interrupt_ids) != len(kinds):
@@ -441,6 +491,24 @@ def _confirmation_suspend(
 
 
 def _function_response_dict(suspend: AdkSuspend, result: Any) -> dict[str, Any]:
+    if suspend.review is not None:
+        named: Any = (
+            cast(dict[str, Any], result).get("guardrail_review")
+            if isinstance(result, dict)
+            else None
+        )
+        if not isinstance(named, dict):
+            raise SuspendTranslationError(
+                "ADK review answer does not match its OE halt"
+            )
+        answer = cast(dict[str, Any], named)
+        if answer.get("review_id") != suspend.review.review.review_id or answer.get(
+            "decision"
+        ) not in ("approve", "deny"):
+            raise SuspendTranslationError(
+                "ADK review answer does not match its OE halt"
+            )
+        return {"guardrail_review": answer}
     if suspend.kind == REQUEST_INPUT_FUNCTION_CALL_NAME:
         return _mapping_response(result)
     return _confirmation_response(result)

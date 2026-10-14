@@ -18,9 +18,12 @@ from google.adk.sessions.base_session_service import BaseSessionService
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from agent_engine_runner_shared.context import get_current_wrapper
 from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import AttemptContext
+from agent_engine_runner_shared.secure_llm_proxy import GuardrailReviewPending
 from agent_engine_sdk_adk.errors import UnsupportedDurableADKError
 from agent_engine_sdk_adk.execution_session import DurableSession
+from agent_engine_sdk_adk.guardrail_review import ReviewWait, review_continuation_scope
 from agent_engine_sdk_adk.messages import content_to_platform_messages
 from agent_engine_sdk_adk.route import DurableRouteAdapter
 from agent_engine_sdk_adk.suspend import (
@@ -239,6 +242,9 @@ async def stream_invocation(
     new_message = session.original_message(input)
     invocation_id: str | None = None
 
+    review_waits: list[ReviewWait] = []
+    review_halts: dict[str, GuardrailReviewPending] = {}
+
     while True:
         turn = AdkTurn(
             session.runner,
@@ -248,8 +254,22 @@ async def stream_invocation(
             invocation_id=invocation_id,
             route_adapter=session.route_adapter,
         )
-        async for event in turn.stream(emit_tokens=emit_tokens):
-            yield event
+        wrapper = get_current_wrapper()
+        allocations = 0
+        if review_waits:
+            if wrapper is None:
+                raise UnsupportedDurableADKError(
+                    "ADK review continuation requires the secure wrapper"
+                )
+            allocations = wrapper.operational_steps.allocation_count()
+        with review_continuation_scope(
+            review_waits, allocation_count=allocations, halts=review_halts
+        ) as reserved:
+            if review_waits and wrapper is not None:
+                wrapper.observe_operational_step(reserved)
+            async for event in turn.stream(emit_tokens=emit_tokens):
+                yield event
+        review_waits = []
         wait_frontier = turn.wait_frontier()
         if not wait_frontier:
             await complete_execution(attempt, session.scratch.session)
@@ -277,6 +297,11 @@ async def stream_invocation(
         ):
             emit_tokens = True
         try:
+            review_waits = [
+                suspend.review
+                for suspend in resolution.suspends
+                if suspend.review is not None
+            ]
             if len(resolution.suspends) == 1:
                 new_message = function_response_frontier_content(
                     resolution.suspends,

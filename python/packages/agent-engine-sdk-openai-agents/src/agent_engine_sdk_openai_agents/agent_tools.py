@@ -21,6 +21,7 @@ from typing import Any, cast
 from agent_engine_sdk import LLMToolCall, StreamEvent
 from agents import Agent, FunctionTool, Tool
 from agents import agent as sdk_agent
+from agents import agent_tool_state as sdk_agent_tool_state
 from agents import tool as sdk_tool
 from agents.tool_context import ToolContext
 
@@ -30,13 +31,22 @@ from agent_engine_runner_shared.workflow.context import (
     preallocate_child_operation_ordinals,
 )
 from agent_engine_sdk_openai_agents.errors import UnsupportedDurableOpenAIAgentsError
-from agent_engine_sdk_openai_agents.tools import ToolCallFailed, TurnContext, json_text
+from agent_engine_sdk_openai_agents.tools import (
+    ModelCall,
+    ToolCallFailed,
+    TurnContext,
+    current_turn,
+    json_text,
+)
 
 __all__ = [
     "NestedAgentRun",
     "emit_nested_token",
+    "forget_stopped_runs",
+    "model_call_turn",
     "nested_model_request",
     "is_agent_tool",
+    "note_calls",
     "preallocate_nested_runs",
     "scoped_agent_tool",
 ]
@@ -76,11 +86,11 @@ def scoped_agent_tool(tool: FunctionTool) -> Agent[Any]:
     target = getattr(tool, "_agent_instance", None)
     if not isinstance(target, Agent) or not set(_UNSUPPORTED_OPTIONS) <= set(captured):
         # A hand-built or wrapped tool, or an SDK whose as_tool() differs from
-        # the one this adapter was built against: what the Runner would invoke
+        # the ones this adapter recognizes: what the Runner would invoke
         # cannot be read.
         raise UnsupportedDurableOpenAIAgentsError(
             f"agent tool {tool.name!r} must be built with Agent.as_tool(...) "
-            "from the openai-agents version this adapter pins"
+            "from an openai-agents version this adapter supports"
         )
     unsupported = {name: captured[name] is not None for name in _UNSUPPORTED_OPTIONS}
     unsupported["a callable needs_approval"] = not isinstance(tool.needs_approval, bool)
@@ -133,6 +143,8 @@ class _NestedRun:
     name: str
     tool_call_id: str
     turn: TurnContext | None
+    # This run's child operations, outermost first.
+    boundaries: tuple[ChildOperationBoundary, ...]
 
     def emit(self, event: str, **data: str) -> None:
         if self.turn is not None:
@@ -158,6 +170,35 @@ def emit_nested_token(content: str) -> None:
     nested = _NESTED_RUN.get()
     if nested is not None:
         nested.emit("token", content=content)
+
+
+def note_calls(calls: Iterable[LLMToolCall]) -> None:
+    """Remember which run made each call a model returned this turn.
+
+    An approval names its call by id alone, so within a turn an id belongs to
+    one run: the turn's own agents, or one nested agent run.
+    """
+    nested = _NESTED_RUN.get()
+    turn = model_call_turn()
+    if turn is None:
+        return
+    boundaries = nested.boundaries if nested is not None else ()
+    for call in calls:
+        if not call.id:
+            continue
+        known = turn.calls.get(call.id)
+        if known is None:
+            turn.calls[call.id] = ModelCall(boundaries, len(turn.calls))
+        elif known.boundaries != boundaries:
+            raise UnsupportedDurableOpenAIAgentsError(
+                f"tool call id {call.id!r} was used by two agent runs in one turn"
+            )
+
+
+def model_call_turn() -> TurnContext | None:
+    """The turn a model call belongs to, whichever run makes it."""
+    nested = _NESTED_RUN.get()
+    return nested.turn if nested is not None else current_turn()
 
 
 @contextmanager
@@ -194,14 +235,16 @@ class NestedAgentRun:
             raise UnsupportedDurableOpenAIAgentsError(
                 f"agent tool {self._tool_name!r} was called without a call id"
             )
+        # The parent call id tells apart repeated and concurrent calls to the
+        # same agent tool; the secure model preallocated their order.
+        boundary = ChildOperationBoundary(name=self._tool_name, occurrence_key=call_id)
+        outer = _NESTED_RUN.get()
         nested = _NestedRun(
             name=self._tool_name,
             tool_call_id=call_id,
             turn=context.context if isinstance(context.context, TurnContext) else None,
+            boundaries=(*(outer.boundaries if outer is not None else ()), boundary),
         )
-        # The parent call id tells apart repeated and concurrent calls to the
-        # same agent tool; the secure model preallocated their order.
-        boundary = ChildOperationBoundary(name=self._tool_name, occurrence_key=call_id)
         token = _NESTED_RUN.set(nested)
         try:
             with child_operation_boundary_scope(boundary):
@@ -211,21 +254,81 @@ class NestedAgentRun:
                     description=_request(arguments),
                 )
                 summary = ""
+                waiting = False
                 try:
+                    result = await self.sdk_invoker(context, arguments)
+                    waiting = _waits_for_approval(context, nested.turn)
+                    if waiting:
+                        # Once the approval is answered the SDK calls this tool
+                        # again with the same call id, and the run continues
+                        # under the same path.
+                        return result
                     # The SDK would store a non-string result as its Python
                     # repr; durable history needs text it can read back.
-                    summary = json_text(await self.sdk_invoker(context, arguments))
+                    summary = json_text(result)
                     return summary
                 finally:
-                    nested.emit(
-                        "subagent_end", subagent_name=self._tool_name, summary=summary
-                    )
+                    if not waiting:
+                        nested.emit(
+                            "subagent_end",
+                            subagent_name=self._tool_name,
+                            summary=summary,
+                        )
         except ToolCallFailed:
             raise
         except Exception as error:
             raise ToolCallFailed(error) from error
         finally:
             _NESTED_RUN.reset(token)
+
+
+def _waits_for_approval(context: ToolContext[Any], turn: TurnContext | None) -> bool:
+    """Whether the nested run this call started stopped for an approval.
+
+    The SDK's invoker returns nothing in that case and keeps the stopped run
+    for the parent run to report and later continue.
+    """
+    if context.tool_call is None:
+        return False
+    scope = sdk_agent_tool_state.get_agent_tool_state_scope(context)
+    stopped = sdk_agent_tool_state.peek_agent_tool_run_result(
+        context.tool_call, scope_id=scope
+    )
+    waiting = bool(getattr(stopped, "interruptions", None))
+    if waiting and turn is not None:
+        turn.stopped_calls.append(context.tool_call)
+    return waiting
+
+
+def forget_stopped_runs(turn: TurnContext) -> None:
+    """Drop the stopped nested runs the SDK still holds for this turn.
+
+    The SDK keeps a stopped nested run in a process-wide table, found again by
+    its parent call's id, name, and arguments. A turn that suspends never
+    continues it, and the attempt that resumes the turn replays the same parent
+    call, often in this process: left in the table, the stale run would be
+    continued in place of the replay, without its model call reaching OE.
+
+    Applying an answer also makes the SDK copy a stopped run, under scopes and
+    call objects of its own. It releases a copy when its call object is
+    collected, which the copy itself prevents, so a long-lived runner would
+    keep one for every answered approval inside a nested agent.
+
+    A run and its copies are found by what the parent call says; the item id
+    in it names this execution, so no other execution's run matches. Two
+    attempts of one execution would match each other: this relies on OE
+    starting an attempt only after the previous one suspended or its lease
+    expired.
+    """
+    held = sdk_agent_tool_state._agent_tool_run_results_by_signature  # pyright: ignore[reportPrivateUsage]
+    for tool_call in turn.stopped_calls:
+        said = sdk_agent_tool_state._tool_call_signature(tool_call)  # pyright: ignore[reportPrivateUsage]
+        for scope, held_said in list(held):
+            if held_said == said:
+                sdk_agent_tool_state.drop_agent_tool_run_result(
+                    tool_call, scope_id=scope
+                )
+    turn.stopped_calls.clear()
 
 
 def _request(arguments: str) -> str:

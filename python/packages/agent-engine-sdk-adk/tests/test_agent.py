@@ -34,7 +34,7 @@ from agent_engine_sdk_adk.workflow import complete_durable_execution
 
 
 def _agent() -> ADKBaseAgent:
-    return ADKBaseAgent(adk_agent=MagicMock(), app_name="app")
+    return ADKBaseAgent(adk_agent=MagicMock(retry_config=None), app_name="app")
 
 
 def test_get_agent_runs_builder_with_customer_origin():

@@ -7,7 +7,14 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any, cast
 
 from agent_engine_sdk import BaseApp, ToolDefinition
-from agents import Agent, FunctionTool, Model, ModelSettings, function_tool
+from agents import (
+    Agent,
+    FunctionTool,
+    Model,
+    ModelSettings,
+    function_tool,
+    set_tracing_disabled,
+)
 from agents.function_schema import FuncSchema
 
 from agent_engine_runner_shared import RuntimeAgentConfig, RuntimeMode, TenantRuntime
@@ -23,6 +30,13 @@ from agent_engine_runner_shared.hooks import (
     reset_llm_registry,
     snapshot_llm_registry,
 )
+from agent_engine_runner_shared.mcp_tools import (
+    MCPConfigError,
+    MCPToolBinding,
+    discover_mcp_tools,
+    make_mcp_tool_pod_callable,
+    mcp_server_network_hosts,
+)
 from agent_engine_runner_shared.utils import get_env_bool
 from agent_engine_sdk_openai_agents.agent import OpenAIAgentsBaseAgent
 from agent_engine_sdk_openai_agents.llm_adapter import OpenAIAgentsLLM, RegisteredModel
@@ -30,6 +44,7 @@ from agent_engine_sdk_openai_agents.secure_model import SecureModel
 from agent_engine_sdk_openai_agents.tools import (
     json_result,
     secure_function_tool,
+    secure_mcp_tool,
     tool_schema,
 )
 
@@ -84,6 +99,16 @@ class App(BaseApp):
         self._tool_defs: list[ToolDefinition] = []
         self._tool_schemas: dict[str, FuncSchema] = {}
         self._tool_approvals: dict[str, bool] = {}
+        self._mcp_tools: dict[str, MCPToolBinding] = {}
+        # As in the LangGraph adapter: only the AER discovers MCP tools. The
+        # Tool Pod finds a call's server from agent.yaml when the call arrives.
+        if self._runtime.mode == RuntimeMode.AER:
+            self._register_mcp_tools()
+            # The SDK would send a run's prompts and outputs to OpenAI's trace
+            # service, outside OE. A run started inside the adapter's own run,
+            # as a guardrail's judge is, inherits that run's disabled trace;
+            # this covers a run the app starts anywhere else in the process.
+            set_tracing_disabled(True)
 
     @property
     def agent_config(self) -> RuntimeAgentConfig:
@@ -116,6 +141,11 @@ class App(BaseApp):
             schema = tool_schema(fn)
             if schema.name in self._tool_schemas:
                 raise ValueError(f"tool {schema.name!r} is already registered")
+            if schema.name in self._mcp_tools:
+                raise MCPConfigError(
+                    f"tool {schema.name!r} has the name of a tool from a "
+                    "configured MCP server"
+                )
             self._tool_schemas[schema.name] = schema
             self._tool_approvals[schema.name] = needs_approval
             run = json_result(fn)
@@ -148,15 +178,66 @@ class App(BaseApp):
 
         return register
 
+    def _register_mcp_tools(self) -> None:
+        mcp_config = self.agent_config.mcp
+        if not mcp_config.servers:
+            return
+        # By name, not in the order the server listed them: the tools offered
+        # to the model are part of what OE compares on replay, and a server
+        # need not list its tools in the same order for a replacement attempt.
+        for binding in sorted(
+            discover_mcp_tools(mcp_config), key=lambda binding: binding.sdk_tool_name
+        ):
+            name = binding.sdk_tool_name
+            run = make_mcp_tool_pod_callable(binding)
+            description = (
+                binding.description or f"Remote MCP tool {binding.tool_name}"
+            ).strip()
+            network = mcp_server_network_hosts(binding.server_config)
+            timeout = binding.server_config.timeout_seconds
+            self._runtime.register_tool(  # type: ignore[attr-defined]
+                name=name,
+                func=run,
+                metadata={
+                    "name": name,
+                    "description": description,
+                    "is_local": False,
+                    "network": network,
+                    "timeout_seconds": timeout,
+                    "redact_fields": [],
+                    "mcp_server": binding.server_name,
+                    "mcp_tool": binding.tool_name,
+                },
+            )
+            self._tool_defs.append(
+                ToolDefinition(
+                    name=name,
+                    description=description,
+                    args_schema=binding.input_schema,
+                    callable=run,
+                    remote=True,
+                    network=network,
+                    timeout_seconds=timeout,
+                    redact_fields=[],
+                )
+            )
+            self._mcp_tools[name] = binding
+
     def tools(self) -> list[FunctionTool]:
-        """Return the registered tools as native ``FunctionTool`` objects."""
+        """Return the app's tools as native ``FunctionTool`` objects.
+
+        These are the functions registered with ``@app.tool`` and the tools of
+        the MCP servers listed under ``mcp.servers`` in ``agent.yaml``.
+        """
         if self._runtime.mode != RuntimeMode.AER:
             # The Tool Pod builds the agent only to find its models; it runs
             # registered tool functions itself.
             return [function_tool(tool.callable) for tool in self._tool_defs]
         allow_direct = get_env_bool("RUNNER_ALLOW_DIRECT_TOOL_EXECUTION", False)
         return [
-            secure_function_tool(
+            self._mcp_tool(self._mcp_tools[tool.name], tool, allow_direct)
+            if tool.name in self._mcp_tools
+            else secure_function_tool(
                 tool.callable,
                 self._tool_schemas[tool.name],
                 is_local=not tool.remote,
@@ -167,6 +248,22 @@ class App(BaseApp):
             )
             for tool in self._tool_defs
         ]
+
+    def _mcp_tool(
+        self, binding: MCPToolBinding, tool: ToolDefinition, allow_direct: bool
+    ) -> FunctionTool:
+        return secure_mcp_tool(
+            tool.callable,
+            name=tool.name,
+            description=tool.description,
+            input_schema=binding.input_schema,
+            metadata={
+                "mcp_server": binding.server_name,
+                "mcp_tool": binding.tool_name,
+            },
+            allow_direct=allow_direct,
+            issuer=self,
+        )
 
     def llm(
         self,

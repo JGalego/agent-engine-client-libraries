@@ -15,7 +15,8 @@ agent.py
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from agent_engine_sdk import (
@@ -28,6 +29,16 @@ from agent_engine_sdk import (
 )
 
 from agent_engine_runner_shared.execution import AgentExecutionResult
+from agent_engine_runner_shared.generated.workflow.v1.state_pb2 import (
+    MESSAGE_ROLE_USER,
+    WorkflowMessage,
+)
+from agent_engine_runner_shared.workflow import (
+    CancelledHistory,
+    current_attempt_context,
+    current_cancelled_history,
+)
+from agent_engine_runner_shared.workflow.protojson import json_to_proto_value
 from agent_engine_sdk_adk.errors import UnsupportedDurableADKError
 from agent_engine_sdk_adk.runner import DurableADKRunner
 from agent_engine_sdk_adk.stream import stream_invocation, terminal_from_stream_event
@@ -86,3 +97,36 @@ class ADKBaseAgent(BaseAgent):
             complete_execution=complete_durable_execution,
         ):
             yield event
+
+    @contextmanager
+    def cancelled_history_scope(
+        self, ctx: RequestContext, input: AgentInput
+    ) -> Generator[CancelledHistory]:
+        """Expose cancellation capture to the shared AER reporting lifecycle.
+
+        The runner enters this scope before the durable attempt's work runs, so a
+        Stop that tears the run down mid-turn can still retain the stopped
+        transcript. The opener is the request message under the id the adapter
+        seeds; ``normalized_input`` may replace it once the hook input is known.
+        """
+        del ctx
+        attempt = current_attempt_context()
+        if attempt is None:
+            raise UnsupportedDurableADKError(
+                "cancellation history requires an OE attempt"
+            )
+        payload = input.payload if isinstance(input.payload, dict) else {}
+        history = CancelledHistory(
+            attempt,
+            WorkflowMessage(
+                id=f"durable-input:{attempt.workflow_identity.execution_id}",
+                role=MESSAGE_ROLE_USER,
+                content=json_to_proto_value(str(payload.get("message", ""))),
+            ),
+        )
+        token = current_cancelled_history.set(history)
+        try:
+            yield history
+        finally:
+            current_cancelled_history.reset(token)
+            history.clear()

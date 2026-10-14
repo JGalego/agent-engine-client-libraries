@@ -4,7 +4,8 @@ per-llm_id multi-model substitution)."""
 
 from __future__ import annotations
 
-from typing import cast
+from dataclasses import dataclass
+from typing import Any, cast
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -25,6 +26,11 @@ from agent_engine_sdk_langgraph.testing import (
 # it here — cast rather than typed for real, since nothing about it is ever used
 # as an LLM.
 _UNUSED_REAL_LLM = cast(BaseChatModel, object())
+
+
+@dataclass
+class _Ticket:
+    number: int
 
 
 class TestFakeChatModel:
@@ -678,6 +684,46 @@ class TestBuildTestAgent:
         assert isinstance(first_response, dict) and isinstance(second_response, dict)
         assert first_response["message_count"] == 2
         assert second_response["message_count"] == 4
+
+    @pytest.mark.parametrize(
+        ("allowed", "expected_reload"),
+        [([], {"number": 7}), ([_Ticket], _Ticket(7))],
+        ids=["unlisted-comes-back-raw", "allowlisted-round-trips"],
+    )
+    @pytest.mark.anyio
+    async def test_checkpoint_reload_matches_the_aer_allowlist(
+        self, allowed, expected_reload
+    ):
+        # A second turn reads state back from the checkpoint, so it must see
+        # what an AER resume would: custom types only when allowlisted.
+        from agent_engine_sdk import AgentInput, RequestContext
+        from langgraph.graph import END, MessagesState, StateGraph
+
+        class TicketState(MessagesState):
+            ticket: Any
+
+        app = App(app_name="Ticket Agent", checkpoint_allowed_types=allowed)
+        reloaded: list[Any] = []
+
+        @app.entrypoint
+        def build():
+            def track(state: TicketState) -> dict:
+                if "ticket" in state:
+                    reloaded.append(state["ticket"])
+                return {"ticket": _Ticket(7), "messages": [AIMessage("ok")]}
+
+            graph = StateGraph(TicketState)
+            graph.add_node("track", track)
+            graph.set_entry_point("track")
+            graph.add_edge("track", END)
+            return graph.compile(checkpointer=app.checkpointer())
+
+        agent = build_test_agent(app, FakeChatModel(responses=["unused"]))
+        ctx = RequestContext(execution_id="e1", session_id="s1", user_id="u1")
+        await agent.invoke(ctx, AgentInput(payload={"message": "hi"}))
+        await agent.invoke(ctx, AgentInput(payload={"message": "again"}))
+
+        assert reloaded == [expected_reload]
 
     @pytest.mark.anyio
     async def test_llms_map_routes_per_llm_id(self):

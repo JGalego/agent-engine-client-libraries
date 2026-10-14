@@ -15,6 +15,9 @@ def _make_app(mode: RuntimeMode = RuntimeMode.AER) -> Any:
     with patch("agent_engine_sdk_adk.runtime.TenantRuntime") as MockRuntime:
         mock_rt = MagicMock()
         mock_rt.mode = mode
+        # Real configs default to no MCP servers; the mock must match or App
+        # construction would attempt remote tools/list discovery.
+        mock_rt.agent_config.mcp.servers = {}
         MockRuntime.return_value = mock_rt
         from agent_engine_sdk_adk.runtime import App
 

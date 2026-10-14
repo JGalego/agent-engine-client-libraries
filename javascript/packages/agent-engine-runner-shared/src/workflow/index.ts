@@ -33,6 +33,7 @@ export {
   advanceStepOrdinal,
   childOperationBoundaryScope,
   currentAttemptContext,
+  currentCancelledHistory,
   currentOperationPath,
   currentPendingChildOperationBatch,
   currentStepOrdinal,
@@ -48,6 +49,7 @@ export {
   recordInterruptedActivity,
   recordReconstructedActivityInterrupt,
   runWithAttemptContext,
+  reportCancelledHistoryBeforeCleanup,
   runWithOperationPathResolver,
   setActivityReconstructionIds,
   setPendingChildOperationBatch,
@@ -59,6 +61,7 @@ export type {
   OperationPathResolver,
 } from "./context.js";
 export { AttemptHeartbeat } from "./heartbeat.js";
+export * from "./cancelled_history.js";
 export { DurableMemoryState, validateDurableMemoryIdentity } from "./memory.js";
 export * from "../generated/workflow/v1/activity_pb.js";
 export * from "../generated/workflow/v1/common_pb.js";

@@ -23,6 +23,12 @@ class ActivityOutcomeKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ACTIVITY_OUTCOME_KIND_FAILED: _ClassVar[ActivityOutcomeKind]
     ACTIVITY_OUTCOME_KIND_DENIED: _ClassVar[ActivityOutcomeKind]
     ACTIVITY_OUTCOME_KIND_SUSPENDED: _ClassVar[ActivityOutcomeKind]
+
+class UnknownOutcomePolicy(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    UNKNOWN_OUTCOME_POLICY_UNSPECIFIED: _ClassVar[UnknownOutcomePolicy]
+    UNKNOWN_OUTCOME_POLICY_FAIL: _ClassVar[UnknownOutcomePolicy]
+    UNKNOWN_OUTCOME_POLICY_RERUN: _ClassVar[UnknownOutcomePolicy]
 ACTIVITY_KIND_UNSPECIFIED: ActivityKind
 ACTIVITY_KIND_LLM: ActivityKind
 ACTIVITY_KIND_TOOL: ActivityKind
@@ -32,9 +38,12 @@ ACTIVITY_OUTCOME_KIND_COMPLETED: ActivityOutcomeKind
 ACTIVITY_OUTCOME_KIND_FAILED: ActivityOutcomeKind
 ACTIVITY_OUTCOME_KIND_DENIED: ActivityOutcomeKind
 ACTIVITY_OUTCOME_KIND_SUSPENDED: ActivityOutcomeKind
+UNKNOWN_OUTCOME_POLICY_UNSPECIFIED: UnknownOutcomePolicy
+UNKNOWN_OUTCOME_POLICY_FAIL: UnknownOutcomePolicy
+UNKNOWN_OUTCOME_POLICY_RERUN: UnknownOutcomePolicy
 
 class ActivityCommand(_message.Message):
-    __slots__ = ("workflow_identity", "attempt_id", "fencing_token", "position", "activity_kind", "activity_name", "semantic_input")
+    __slots__ = ("workflow_identity", "attempt_id", "fencing_token", "position", "activity_kind", "activity_name", "semantic_input", "on_unknown_outcome")
     WORKFLOW_IDENTITY_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_ID_FIELD_NUMBER: _ClassVar[int]
     FENCING_TOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -42,6 +51,7 @@ class ActivityCommand(_message.Message):
     ACTIVITY_KIND_FIELD_NUMBER: _ClassVar[int]
     ACTIVITY_NAME_FIELD_NUMBER: _ClassVar[int]
     SEMANTIC_INPUT_FIELD_NUMBER: _ClassVar[int]
+    ON_UNKNOWN_OUTCOME_FIELD_NUMBER: _ClassVar[int]
     workflow_identity: _common_pb2.WorkflowIdentity
     attempt_id: str
     fencing_token: int
@@ -49,7 +59,8 @@ class ActivityCommand(_message.Message):
     activity_kind: ActivityKind
     activity_name: str
     semantic_input: _struct_pb2.Value
-    def __init__(self, workflow_identity: _Optional[_Union[_common_pb2.WorkflowIdentity, _Mapping]] = ..., attempt_id: _Optional[str] = ..., fencing_token: _Optional[int] = ..., position: _Optional[_Union[_common_pb2.ActivityPosition, _Mapping]] = ..., activity_kind: _Optional[_Union[ActivityKind, str]] = ..., activity_name: _Optional[str] = ..., semantic_input: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ...) -> None: ...
+    on_unknown_outcome: UnknownOutcomePolicy
+    def __init__(self, workflow_identity: _Optional[_Union[_common_pb2.WorkflowIdentity, _Mapping]] = ..., attempt_id: _Optional[str] = ..., fencing_token: _Optional[int] = ..., position: _Optional[_Union[_common_pb2.ActivityPosition, _Mapping]] = ..., activity_kind: _Optional[_Union[ActivityKind, str]] = ..., activity_name: _Optional[str] = ..., semantic_input: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., on_unknown_outcome: _Optional[_Union[UnknownOutcomePolicy, str]] = ...) -> None: ...
 
 class ActivityContext(_message.Message):
     __slots__ = ("workflow_identity", "activity_id", "attempt_id", "fencing_token")

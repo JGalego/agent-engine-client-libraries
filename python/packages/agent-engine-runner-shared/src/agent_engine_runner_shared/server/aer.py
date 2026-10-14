@@ -45,6 +45,10 @@ from agent_engine_runner_shared.context import (
     report_oe_owner_url_failure,
     set_execution_context,
 )
+from agent_engine_runner_shared.generated.workflow.v1.state_pb2 import (
+    MESSAGE_ROLE_USER,
+    WorkflowMessage,
+)
 from agent_engine_runner_shared.metrics import with_metrics
 from agent_engine_runner_shared.models import (
     AERExecuteResponse,
@@ -80,6 +84,7 @@ from agent_engine_runner_shared.server.chunk_types import (
     TIMEOUT_ERROR_CODE,
     TOOL_CREDENTIAL_REJECTED_ERROR_CODE,
 )
+from agent_engine_runner_shared.server.drain import DrainReason
 from agent_engine_runner_shared.server.graph_warm import GraphWarmer
 from agent_engine_runner_shared.server.http_retry import post_json_with_retries
 from agent_engine_runner_shared.server.oe_url import resolve_oe_url
@@ -101,16 +106,21 @@ from agent_engine_runner_shared.workflow.attempt import (
     heartbeat_interval_seconds_from_attempt,
     new_durability_owner_id,
 )
+from agent_engine_runner_shared.workflow.cancelled_history import cancelled_history_payload
 from agent_engine_runner_shared.workflow.context import reset_attempt_context, set_attempt_context
 from agent_engine_runner_shared.workflow.heartbeat import AttemptHeartbeat
 from agent_engine_runner_shared.workflow.memory import (
     DurableMemoryState,
     validate_durable_memory_identity,
 )
+from agent_engine_runner_shared.workflow.protojson import json_to_proto_value
 
 if TYPE_CHECKING:
     from starlette.datastructures import Headers
 
+    from agent_engine_runner_shared.generated.workflow.v1.runtime_pb2 import (
+        AttemptStartRequest,
+    )
     from agent_engine_runner_shared.runtime import TenantRuntime
 
 logger = logging.getLogger(__name__)
@@ -118,6 +128,11 @@ logger = logging.getLogger(__name__)
 # Whole-turn execution timeout. Matches the platform's stream deadline so a turn
 # is not cut off short of the limit the caller was promised.
 EXECUTION_TIMEOUT = get_env_float("RUNNER_EXECUTION_TIMEOUT", 600.0)
+
+# Bound on the cancelled-turn checkpoint write during drain teardown. The OE's
+# cancel drain deadline is 5s and the write is one Mongo upsert; 3s leaves the
+# remaining settlement phases their share.
+CANCELLED_TURN_COMMIT_TIMEOUT_S = 3.0
 
 # Bounded-retry policy for AER -> OE chunk POSTs. Transient HTTP errors
 # (connection error, 5xx, read/write/protocol timeouts) are retried with
@@ -274,6 +289,8 @@ def _executor_callback_body(
     execution_id: str,
     status: str,
     suspend_generation: Optional[int] = None,
+    attempt_id: Optional[str] = None,
+    attempt_fence: Optional[int] = None,
     result: Any = None,
     error: Optional[str] = None,
     suspend_reason: Optional[str] = None,
@@ -286,6 +303,8 @@ def _executor_callback_body(
         execution_id=execution_id,
         status=status,
         suspend_generation=suspend_generation,
+        attempt_id=attempt_id,
+        attempt_fence=attempt_fence,
         result=result,
         error=error,
         suspend_reason=suspend_reason,
@@ -295,6 +314,10 @@ def _executor_callback_body(
         metadata=metadata,
     )
     callback_body = callback.model_dump()
+    if attempt_id is None:
+        callback_body.pop("attempt_id", None)
+    if attempt_fence is None:
+        callback_body.pop("attempt_fence", None)
     if suspend_generation is None:
         callback_body.pop("suspend_generation", None)
     # Serialize before cleanup so validation and delivery use the same detached
@@ -389,7 +412,7 @@ class AERServer(BaseServer):
         # Execution ids whose SDK run called request_session_finish() and
         # completed normally; drained by the /execute route after the response
         # is sent.
-        self._pending_session_finish: set[str] = set()
+        self._pending_session_finish: dict[str, dict[str, Any]] = {}
         self._callback_delivery = CallbackDelivery(lambda url: self._get_client(url))
         self._graph_warmer = GraphWarmer(self.runtime.warm_up_agent)
 
@@ -699,9 +722,11 @@ class AERServer(BaseServer):
             # Release the session's compute only as a background task, i.e.
             # after this response is sent: the OE may kill this pod with zero
             # grace once it honours the finish request.
-            if request.execution_id in server._pending_session_finish:
-                server._pending_session_finish.discard(request.execution_id)
-                background_tasks.add_task(server._release_finished_session, request)
+            finish_callback = server._pending_session_finish.pop(request.execution_id, None)
+            if finish_callback is not None:
+                background_tasks.add_task(
+                    server._release_finished_session, request, finish_callback
+                )
             return response
 
         @app.get("/tools", response_model=ToolsListResponse)
@@ -849,13 +874,6 @@ class AERServer(BaseServer):
         # before any side effects (A2A registration, execution).
         _reject_ambiguous_message(request)
 
-        # Defensively enforce readiness registration if the startup lifecycle
-        # was bypassed. Capability identity comes from trusted deployment
-        # configuration, not the caller-controlled execute payload.
-        registration_workspace_id = os.environ.get("APP_ID", "").strip()
-        if registration_workspace_id:
-            await self._ensure_oe_registrations(request.platform_api_url, registration_workspace_id)
-
         self.runtime.note_checkpoint_wire_workspace_id(request.workspace_id)
 
         resolved = _resolve_invocation_params(request)
@@ -874,44 +892,34 @@ class AERServer(BaseServer):
         )
         logger.debug("Created NodeExecutionLogger for session %s", session_id[:8])
 
-        # Build the agent before the durable-routing decision: materializing
-        # the graph is what registers the workflow adapter (a graph without
-        # the platform checkpointer must stay native), so the attempt gate
-        # below sees the correct eligibility even on the first request.
-        with self._traced_step(AER_BUILD_AGENT):
-            agent = self.runtime.get_agent(callbacks=[node_logger])
-
-        # Durable route: activate an OE attempt before tenant work. Missing
-        # identity, an old OE (404), or an ineligible framework/graph stays
-        # native; other start failures fail closed before any replayable
-        # work runs.
-        durable_attempt = await self._start_durable_attempt(request, session_id)
-
-        if durable_attempt is not None and self.runtime.memory_enabled:
-            validate_durable_memory_identity(
-                durable_attempt.workflow_identity,
-                request.user_id,
-            )
-
-        # Use contextvars for per-execution isolation
-        wrapper = SecureToolWrapper(
-            oe_url=request.platform_api_url,
+        # Input and context are built before the preparation awaits so a
+        # cancel landing during setup still has a committable turn: identity
+        # comes from the request, not from how far setup got.
+        # AgentInput.payload is the opaque caller blob, with the resolved
+        # message normalized in. Platform plumbing (identity, resume,
+        # checkpoint) travels on ctx, not here.
+        caller_payload: Dict[str, Any] = dict(request.payload or {})
+        caller_payload["message"] = message
+        agent_input = AgentInput(payload=caller_payload)
+        ctx = RequestContext(
             execution_id=request.execution_id,
-            custom_headers=request.custom_headers,
-            oe_owner_url=owner_url,
-            durable_memory=(
-                DurableMemoryState(message or None)
-                if durable_attempt is not None and self.runtime.memory_enabled
-                else None
-            ),
-            call_registry=self.drain_registry,
+            session_id=session_id,
+            user_id=request.user_id,
+            workspace_id=workspace_id,
+            request_headers=request.custom_headers,
+            resume=request.resume,
+            resume_data=_resolve_resume_payload(request),
+            metadata=request.metadata,
+            previous_execution_cancelled=request.previous_execution_cancelled,
         )
-        # Native resume continues after its checkpoint. Durable replay instead
-        # restarts at zero so each activity reaches its original OE identity.
-        if request.resume_from_step is not None and durable_attempt is None:
-            # Raise the shared allocator watermark so the next mint continues
-            # past the resumed step (not restarting at 1).
-            wrapper.observe_operational_step(request.resume_from_step)
+
+        # Native-vs-durable eligibility is decidable without I/O, but only
+        # once the agent is materialized — building the graph is what
+        # registers (or clears) the workflow adapter eligibility consults.
+        # Until then the routing mode is unknown, and an unknown mode never
+        # writes native history.
+        durable_start_request: AttemptStartRequest | None = None
+        durable_eligibility_known = False
 
         heartbeat = None
         attempt_token = None
@@ -921,36 +929,112 @@ class AERServer(BaseServer):
             *,
             status: str,
             **fields: Any,
-        ) -> None:
+        ) -> dict[str, Any]:
             nonlocal pending_callback
             pending_callback = _executor_callback_body(
                 request.execution_id,
                 status,
                 suspend_generation=request.suspend_generation,
+                attempt_id=(
+                    durable_attempt.attempt_id
+                    if durable_attempt is not None and status in ("COMPLETED", "ERROR")
+                    else None
+                ),
+                attempt_fence=(
+                    durable_attempt.fencing_token
+                    if durable_attempt is not None and status in ("COMPLETED", "ERROR")
+                    else None
+                ),
                 **fields,
             )
 
-        if durable_attempt is not None:
-            heartbeat = AttemptHeartbeat(
-                attempt=durable_attempt,
-                interval_seconds=heartbeat_interval_seconds_from_attempt(
-                    durable_attempt.heartbeat_interval_ms
-                ),
-                oe_url=request.platform_api_url,
-            )
-            # Activate the lease before tenant code can perform replayable
-            # work; start() is fail-closed and blocks, so keep it off the loop.
-            try:
-                await asyncio.to_thread(heartbeat.start)
-            except Exception:
-                await wrapper.close()
-                raise
+            return pending_callback
 
-        # Every resource acquired from here on is released by the finally
-        # below; nothing may run between lease activation and this guard.
+        # Every resource acquired from here on — including the lease and the
+        # cancellation capture — is released by the finally below.
+        agent = None
+        durable_attempt = None
+        durable_routing_resolved = False
+        # The activation request, held as a task so a Stop cannot discard the
+        # receipt: StartAttempt cannot be re-issued once OE has cancelled the
+        # execution, so an in-flight response is the only way to learn the
+        # attempt the cancellation raced.
+        activation: Optional[asyncio.Future] = None
+        wrapper: Optional[SecureToolWrapper] = None
         context_tokens = None
+        history_scope: contextlib.AbstractContextManager[Any] | None = None
+        history = None
         execution_succeeded = False
+        execution_cancelled = False
+        execution_timed_out = False
+        prep_complete = False
         try:
+            # Build the agent before the durable-routing decision: materializing
+            # the graph is what registers the workflow adapter (a graph without
+            # the platform checkpointer must stay native), so the eligibility
+            # computed here — before the first preparation await — is correct
+            # even on this worker's first request.
+            with self._traced_step(AER_BUILD_AGENT):
+                agent = self.runtime.get_agent(callbacks=[node_logger])
+            durable_start_request = attempt_start_request_from_execute(
+                request,
+                session_id,
+                self._durability_owner_id,
+                self.runtime.app_name,
+                workflow_version=self.runtime.app_version,
+                memory_enabled=self.runtime.memory_enabled,
+            )
+            durable_eligibility_known = True
+
+            # Defensively enforce readiness registration if the startup
+            # lifecycle was bypassed. Capability identity comes from trusted
+            # deployment configuration, not the caller-controlled payload.
+            registration_workspace_id = os.environ.get("APP_ID", "").strip()
+            if registration_workspace_id:
+                await self._ensure_oe_registrations(
+                    request.platform_api_url, registration_workspace_id
+                )
+
+            # Durable route: activate an OE attempt before tenant work. Missing
+            # identity, an old OE (404), or an ineligible framework/graph stays
+            # native; other start failures fail closed before any replayable
+            # work runs.
+            # A task, not a bare await: a Stop cancels this handler at the await,
+            # and OE refuses to start an attempt for an execution it has already
+            # cancelled, so an in-flight response is the only receipt left. The
+            # shield keeps that request alive through the cancellation.
+            activation = asyncio.ensure_future(
+                self._start_durable_attempt(request, durable_start_request)
+            )
+            durable_attempt = await asyncio.shield(activation)
+            durable_routing_resolved = True
+
+            if durable_attempt is not None and self.runtime.memory_enabled:
+                validate_durable_memory_identity(
+                    durable_attempt.workflow_identity,
+                    request.user_id,
+                )
+
+            # Use contextvars for per-execution isolation
+            wrapper = SecureToolWrapper(
+                oe_url=request.platform_api_url,
+                execution_id=request.execution_id,
+                custom_headers=request.custom_headers,
+                oe_owner_url=owner_url,
+                durable_memory=(
+                    DurableMemoryState(message or None)
+                    if durable_attempt is not None and self.runtime.memory_enabled
+                    else None
+                ),
+                call_registry=self.drain_registry,
+            )
+            # Native resume continues after its checkpoint. Durable replay instead
+            # restarts at zero so each activity reaches its original OE identity.
+            if request.resume_from_step is not None and durable_attempt is None:
+                # Raise the shared allocator watermark so the next mint continues
+                # past the resumed step (not restarting at 1).
+                wrapper.observe_operational_step(request.resume_from_step)
+
             # Registered inside the try so the finally's pop always runs; the
             # first callback that consumes it happens after this point.
             if owner_url:
@@ -987,6 +1071,36 @@ class AERServer(BaseServer):
             caller_payload: Dict[str, Any] = dict(request.payload or {})
             caller_payload["message"] = message
             agent_input = AgentInput(payload=caller_payload)
+            # Entered before the lease is activated: a Stop during the blocking
+            # start must still find a history to retain.
+            capture_scope = getattr(type(agent), "cancelled_history_scope", None)
+            if durable_attempt is not None and callable(capture_scope):
+                scope = cast(
+                    contextlib.AbstractContextManager[Any],
+                    capture_scope(agent, ctx, agent_input),
+                )
+                history = scope.__enter__()
+                history_scope = scope
+
+            if durable_attempt is not None:
+                heartbeat = AttemptHeartbeat(
+                    attempt=durable_attempt,
+                    interval_seconds=heartbeat_interval_seconds_from_attempt(
+                        durable_attempt.heartbeat_interval_ms
+                    ),
+                    oe_url=request.platform_api_url,
+                )
+                # Activate the lease before tenant code can perform replayable
+                # work; start() is fail-closed and blocks, so keep it off the
+                # loop. A failed start leaves no lease to stop and closes the
+                # wrapper itself, so the finally must skip both.
+                try:
+                    await asyncio.to_thread(heartbeat.start)
+                except Exception:
+                    await wrapper.close()
+                    wrapper = None
+                    heartbeat = None
+                    raise
 
             if request.resume:
                 logger.info("AER: Resume execution for %s", request.execution_id[:8])
@@ -996,6 +1110,12 @@ class AERServer(BaseServer):
                 request.execution_id[:8],
                 session_id[:8],
             )
+
+            # Setup is done; failures from here on are execution-phase and get
+            # the callback + HTTPException conversion. Pre-stream failures
+            # (build, registrations, routing, heartbeat) fail closed and
+            # propagate unconverted.
+            prep_complete = True
 
             # Execute via BaseAgent.stream()
             try:
@@ -1010,22 +1130,11 @@ class AERServer(BaseServer):
                     timeout=EXECUTION_TIMEOUT,
                 )
             except asyncio.TimeoutError:
+                execution_timed_out = True
                 error_msg = f"Execution timed out after {EXECUTION_TIMEOUT} seconds"
-                try:
-                    await self._send_stream_chunk(
-                        request.platform_api_url,
-                        request.execution_id,
-                        chunk_type=ERROR,
-                        error=error_msg,
-                        metadata={"error_code": TIMEOUT_ERROR_CODE},
-                    )
-                except Exception as chunk_err:
-                    logger.error(
-                        "Failed to deliver ERROR chunk for execution %s after retries: %s",
-                        request.execution_id,
-                        chunk_err,
-                        exc_info=True,
-                    )
+                await self._deliver_error_chunk(
+                    request, error_msg, {"error_code": TIMEOUT_ERROR_CODE}, label="timeout"
+                )
                 stage_callback(
                     status="ERROR",
                     error=error_msg,
@@ -1037,93 +1146,17 @@ class AERServer(BaseServer):
             # _execute_via_agent_stream returns InterruptResult for
             # suspensions and StreamingResult for normal completion.
             if isinstance(execution_outcome, InterruptResult):
-                has_envelope = (
-                    execution_outcome.interrupts is not None
-                    and execution_outcome.resume_schema is not None
-                )
-                if has_envelope:
-                    if not execution_outcome.interrupts:
-                        # Report ERROR to OE before failing, like the legacy
-                        # empty-payload branch below: without the callback the
-                        # execution would stay "running" forever.
-                        error_msg = "Agent produced an empty interrupt snapshot; cannot suspend."
-                        log_execution_callback(
-                            request.execution_id, "ERROR", error=error_msg, prefix="AER"
-                        )
-                        stage_callback(
-                            status="ERROR",
-                            error=error_msg,
-                        )
-                        raise HTTPException(status_code=500, detail=error_msg)
-                    try:
-                        payload = SuspendPayload.model_validate(
-                            execution_outcome.interrupts[0].value
-                        )
-                    except ValidationError:
-                        suspend_reason = "agent_interrupt"
-                        suspend_context = None
-                    else:
-                        suspend_reason = payload.suspend_reason
-                        suspend_context = payload.suspend_context
-                else:
-                    if not execution_outcome.suspend_payload:
-                        error_msg = "Agent produced an empty suspend payload; cannot suspend."
-                        log_execution_callback(
-                            request.execution_id, "ERROR", error=error_msg, prefix="AER"
-                        )
-                        stage_callback(
-                            status="ERROR",
-                            error=error_msg,
-                        )
-                        raise HTTPException(status_code=500, detail=error_msg)
-                    payload = SuspendPayload.model_validate(execution_outcome.suspend_payload)
-                    suspend_reason = payload.suspend_reason
-                    suspend_context = payload.suspend_context
-
-                log_execution_callback(
-                    request.execution_id,
-                    "SUSPENDED",
-                    suspend_reason=suspend_reason,
-                    prefix="AER",
-                )
-
-                # Persist the pre-suspend portion of this turn to STM before
-                # returning. The suspend branch otherwise writes nothing, so the
-                # user prompt and any assistant/tool output produced before the
-                # interrupt would be lost from memory. On a fresh
-                # invoke (not a resume) the user turn is included; on a resume
-                # leg there is no new user prompt, so it is omitted.
-                if self.runtime._memory_writer and durable_attempt is None:
-                    try:
-                        self.runtime.write_turn_async(
-                            message=message,
-                            result_messages=execution_outcome.messages,
-                            user_id=request.user_id,
-                            session_id=session_id,
-                            include_user_turn=not request.resume,
-                        )
-                        logger.info(f"Pre-suspend memory write queued for user {request.user_id}")
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to queue pre-suspend memory write: {e}", exc_info=True
-                        )
-
-                # The framework adapter owns resume semantics; its opaque
-                # metadata is forwarded to the OE verbatim and round-tripped
-                # back into RequestContext.metadata on resume.
-                stage_callback(
-                    status="SUSPENDED",
-                    suspend_reason=suspend_reason,
-                    suspend_context=suspend_context,
-                    interrupts=execution_outcome.interrupts,
-                    resume_schema=execution_outcome.resume_schema,
-                    metadata=execution_outcome.metadata,
+                response = await self._handle_suspension(
+                    request,
+                    execution_outcome,
+                    session_id=session_id,
+                    message=message,
+                    history=history,
+                    durable_attempt=durable_attempt,
+                    stage_callback=stage_callback,
                 )
                 execution_succeeded = True
-                return AERExecuteResponse(
-                    status="suspended",
-                    suspend_reason=suspend_reason,
-                )
+                return response
 
             # Normal completion — write conversation turn to memory (async, non-blocking).
             # include_user_turn=not request.resume: a resume leg carries no new
@@ -1172,7 +1205,7 @@ class AERServer(BaseServer):
             }
             if execution_outcome.metadata is not None:
                 completion_fields["metadata"] = execution_outcome.metadata
-            stage_callback(
+            completed_callback = stage_callback(
                 **completion_fields,
             )
             if is_session_finish_requested():
@@ -1180,7 +1213,7 @@ class AERServer(BaseServer):
                 # this /execute call and turns a transport error into a 502
                 # that overwrites the finished run's result, so the session's
                 # pods must not be killed before the response is delivered.
-                self._pending_session_finish.add(request.execution_id)
+                self._pending_session_finish[request.execution_id] = completed_callback
             execution_succeeded = True
             return AERExecuteResponse(status="completed", result=execution_outcome.content)
 
@@ -1206,21 +1239,7 @@ class AERServer(BaseServer):
             log_execution_callback(
                 request.execution_id, "POLICY_DENIED", error=e.reason, prefix="AER"
             )
-            try:
-                await self._send_stream_chunk(
-                    request.platform_api_url,
-                    request.execution_id,
-                    chunk_type=ERROR,
-                    error=str(e),
-                    metadata=policy_meta,
-                )
-            except Exception as chunk_err:
-                logger.error(
-                    "Failed to deliver policy-denied ERROR chunk for execution %s after retries: %s",
-                    request.execution_id,
-                    chunk_err,
-                    exc_info=True,
-                )
+            await self._deliver_error_chunk(request, str(e), policy_meta, label="policy-denied")
             stage_callback(
                 status="ERROR",
                 error=str(e),
@@ -1237,21 +1256,7 @@ class AERServer(BaseServer):
                 "elapsed_seconds": e.elapsed_seconds,
             }
             log_execution_callback(request.execution_id, "ERROR", error=str(e), prefix="AER")
-            try:
-                await self._send_stream_chunk(
-                    request.platform_api_url,
-                    request.execution_id,
-                    chunk_type=ERROR,
-                    error=str(e),
-                    metadata=timeout_meta,
-                )
-            except Exception as chunk_err:
-                logger.error(
-                    "Failed to deliver timeout ERROR chunk for execution %s after retries: %s",
-                    request.execution_id,
-                    chunk_err,
-                    exc_info=True,
-                )
+            await self._deliver_error_chunk(request, str(e), timeout_meta, label="tool timeout")
             stage_callback(
                 status="ERROR",
                 error=str(e),
@@ -1271,21 +1276,7 @@ class AERServer(BaseServer):
                 raise HTTPException(status_code=500, detail=str(e))
             llm_meta = _llm_invocation_metadata(e.error_code)
             log_execution_callback(request.execution_id, "ERROR", error=str(e), prefix="AER")
-            try:
-                await self._send_stream_chunk(
-                    request.platform_api_url,
-                    request.execution_id,
-                    chunk_type=ERROR,
-                    error=str(e),
-                    metadata=llm_meta,
-                )
-            except Exception as chunk_err:
-                logger.error(
-                    "Failed to deliver LLM-invocation ERROR chunk for execution %s after retries: %s",
-                    request.execution_id,
-                    chunk_err,
-                    exc_info=True,
-                )
+            await self._deliver_error_chunk(request, str(e), llm_meta, label="llm-invocation")
             stage_callback(
                 status="ERROR",
                 error=str(e),
@@ -1293,17 +1284,39 @@ class AERServer(BaseServer):
             )
             raise HTTPException(status_code=500, detail=str(e))
         except asyncio.CancelledError:
+            execution_cancelled = True
             # The drain (or pod teardown) cancelled this handler task: the
             # OE's cancel path owns the terminal Cancelled settlement, so the
             # held /execute must answer cleanly — a 500 here races that
-            # settlement and marks the run ERROR. No terminal callback is
-            # staged for the same reason.
+            # settlement and marks the run ERROR. A CANCELLED callback is
+            # staged only when the commit produced a checkpoint coordinate:
+            # the OE's terminal guard persists it for the branch-source
+            # selector, and never re-settles the run.
             logger.debug(
                 "AER: execution %s cancelled (drain or teardown)",
                 request.execution_id[:8],
             )
+            coordinate = await self._commit_cancelled_turn_coordinate(
+                agent,
+                ctx,
+                agent_input,
+                request.execution_id,
+                durable_attempt=durable_attempt,
+                durable_eligibility_known=durable_eligibility_known,
+                durable_start_request=durable_start_request,
+                durable_routing_resolved=durable_routing_resolved,
+            )
+            if coordinate is not None:
+                stage_callback(
+                    status="CANCELLED",
+                    metadata={"langgraph_checkpoint": coordinate},
+                )
             return AERExecuteResponse(status="cancelled")
         except Exception as e:
+            if not prep_complete:
+                # Pre-stream setup failures (build, registrations, routing,
+                # heartbeat) fail closed and propagate unconverted.
+                raise
             log_execution_callback(request.execution_id, "ERROR", error=str(e), prefix="AER")
             stage_callback(
                 status="ERROR",
@@ -1344,7 +1357,38 @@ class AERServer(BaseServer):
             # Cancellation is a BaseException. Remember it long enough to
             # attempt every settlement phase, then re-raise the first failure.
             try:
-                await wrapper.close()
+                await self._retain_cancelled_history(
+                    request,
+                    message,
+                    durable_attempt=durable_attempt,
+                    history=history,
+                    activation=activation,
+                    durable_start_request=durable_start_request,
+                    execution_cancelled=execution_cancelled,
+                    execution_timed_out=execution_timed_out,
+                )
+            except (Exception, asyncio.CancelledError):
+                # Transport failures must not alter OE's cancellation settlement.
+                logger.warning("Could not retain cancelled execution history")
+            finally:
+                if history_scope is not None:
+                    try:
+                        history_scope.__exit__(None, None, None)
+                    except BaseException as exc:
+                        remember_cleanup_error("history cleanup", exc)
+
+            # The receipt-recovery path above reaps the shielded activation
+            # only on the cancelled path, within the drain budget. On a rolling
+            # restart, an expired Stop, or a plain cancel it can still be in
+            # flight here; cancel and await it so it cannot outlive the handler
+            # while the drain reports completed.
+            if activation is not None and not activation.done():
+                activation.cancel()
+                with contextlib.suppress(BaseException):
+                    await activation
+            try:
+                if wrapper is not None:
+                    await wrapper.close()
             except BaseException as exc:
                 remember_cleanup_error("wrapper close", exc)
             try:
@@ -1389,25 +1433,328 @@ class AERServer(BaseServer):
             if cleanup_error is not None and execution_succeeded:
                 raise cleanup_error
 
-    async def _start_durable_attempt(self, request: ExecuteRequest, session_id: str):
+    async def _handle_suspension(
+        self,
+        request: ExecuteRequest,
+        outcome: InterruptResult,
+        *,
+        session_id: str,
+        message: str,
+        history: Any,
+        durable_attempt: Any,
+        stage_callback: Callable[..., dict[str, Any]],
+    ) -> AERExecuteResponse:
+        """Resolve a suspended turn's payload and report it to OE and memory.
+
+        Raises HTTPException when the adapter produced no usable suspend
+        payload: without the terminal callback the execution would stay
+        running forever.
+        """
+        has_envelope = outcome.interrupts is not None and outcome.resume_schema is not None
+        if has_envelope:
+            if not outcome.interrupts:
+                # Report ERROR to OE before failing, like the legacy
+                # empty-payload branch below: without the callback the
+                # execution would stay "running" forever.
+                error_msg = "Agent produced an empty interrupt snapshot; cannot suspend."
+                log_execution_callback(request.execution_id, "ERROR", error=error_msg, prefix="AER")
+                stage_callback(status="ERROR", error=error_msg)
+                raise HTTPException(status_code=500, detail=error_msg)
+            try:
+                payload = SuspendPayload.model_validate(outcome.interrupts[0].value)
+            except ValidationError:
+                suspend_reason = "agent_interrupt"
+                suspend_context = None
+            else:
+                suspend_reason = payload.suspend_reason
+                suspend_context = payload.suspend_context
+        else:
+            if not outcome.suspend_payload:
+                error_msg = "Agent produced an empty suspend payload; cannot suspend."
+                log_execution_callback(request.execution_id, "ERROR", error=error_msg, prefix="AER")
+                stage_callback(status="ERROR", error=error_msg)
+                raise HTTPException(status_code=500, detail=error_msg)
+            payload = SuspendPayload.model_validate(outcome.suspend_payload)
+            suspend_reason = payload.suspend_reason
+            suspend_context = payload.suspend_context
+
+        log_execution_callback(
+            request.execution_id,
+            "SUSPENDED",
+            suspend_reason=suspend_reason,
+            prefix="AER",
+        )
+
+        # Report the display transcript of this suspended turn so a later Stop —
+        # which finds no active execute handler — still retains it.
+        if history is not None and durable_attempt is not None:
+            try:
+                await asyncio.wait_for(
+                    self._report_cancelled_history(
+                        request.platform_api_url,
+                        durable_attempt,
+                        history,
+                        provisional=True,
+                    ),
+                    timeout=3.0,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to report suspended durable history for execution %s",
+                    request.execution_id,
+                    exc_info=True,
+                )
+
+        # Persist the pre-suspend portion of this turn to STM before returning.
+        # The suspend branch otherwise writes nothing, so the user prompt and any
+        # assistant/tool output produced before the interrupt would be lost from
+        # memory. On a fresh invoke (not a resume) the user turn is included; on
+        # a resume leg there is no new user prompt, so it is omitted.
+        if self.runtime._memory_writer and durable_attempt is None:
+            try:
+                self.runtime.write_turn_async(
+                    message=message,
+                    result_messages=outcome.messages,
+                    user_id=request.user_id,
+                    session_id=session_id,
+                    include_user_turn=not request.resume,
+                )
+                logger.info(f"Pre-suspend memory write queued for user {request.user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to queue pre-suspend memory write: {e}", exc_info=True)
+
+        # The framework adapter owns resume semantics; its opaque metadata is
+        # forwarded to the OE verbatim and round-tripped back into
+        # RequestContext.metadata on resume.
+        stage_callback(
+            status="SUSPENDED",
+            suspend_reason=suspend_reason,
+            suspend_context=suspend_context,
+            interrupts=outcome.interrupts,
+            resume_schema=outcome.resume_schema,
+            metadata=outcome.metadata,
+        )
+        return AERExecuteResponse(status="suspended", suspend_reason=suspend_reason)
+
+    async def _deliver_error_chunk(
+        self,
+        request: ExecuteRequest,
+        error: str,
+        metadata: Dict[str, Any] | None,
+        *,
+        label: str,
+    ) -> None:
+        """Deliver a terminal ERROR chunk, logging a delivery failure.
+
+        Best-effort by design: the terminal callback the caller stages is
+        authoritative, so a failed delivery must not replace the real error.
+        """
+        try:
+            await self._send_stream_chunk(
+                request.platform_api_url,
+                request.execution_id,
+                chunk_type=ERROR,
+                error=error,
+                metadata=metadata,
+            )
+        except Exception as chunk_err:
+            logger.error(
+                "Failed to deliver %s ERROR chunk for execution %s after retries: %s",
+                label,
+                request.execution_id,
+                chunk_err,
+                exc_info=True,
+            )
+
+    async def _retain_cancelled_history(
+        self,
+        request: ExecuteRequest,
+        message: str,
+        *,
+        durable_attempt: Any,
+        history: Any,
+        activation: Any,
+        durable_start_request: Any,
+        execution_cancelled: bool,
+        execution_timed_out: bool,
+    ) -> None:
+        """Retain a cancelled turn's display history inside the drain budget.
+
+        Best-effort throughout: the terminal settlement is OE's, and none of
+        this may change it.
+        """
+        if not execution_cancelled or execution_timed_out:
+            return
+        budget = self.drain_registry.cancellation_report_budget(request.execution_id)
+        if budget <= 0:
+            return
+        if durable_attempt is not None and history is not None:
+            await asyncio.wait_for(
+                self._report_cancelled_history(request.platform_api_url, durable_attempt, history),
+                timeout=budget,
+            )
+            return
+        if durable_attempt is not None or durable_start_request is None:
+            return
+        # The Stop cancelled the activation await before OE's response landed,
+        # leaving no attempt and no capture. Collect the receipt, then retain
+        # the turn's opener under the attempt it names.
+        recovered = await self._collect_attempt_receipt(request, activation, budget)
+        remaining = self.drain_registry.cancellation_report_budget(request.execution_id)
+        if recovered is None or remaining <= 0:
+            return
+        await asyncio.wait_for(
+            self._send_cancelled_history(
+                request.platform_api_url,
+                recovered,
+                self._opener_only_capture(request, message),
+            ),
+            timeout=remaining,
+        )
+
+    async def _collect_attempt_receipt(
+        self, request: ExecuteRequest, activation: Any, budget: float
+    ) -> Any:
+        """Collect the attempt an in-flight activation already committed.
+
+        The request was admitted before the cancel, so OE answers it on its own
+        terms; a cancelled execution cannot start a new attempt, which is why
+        the receipt is collected rather than re-requested. ``wait_for`` cancels
+        the task it times out on, so an unreceipted activation never outlives
+        the drain budget.
+        """
+        try:
+            return await asyncio.wait_for(activation, timeout=budget)
+        except Exception:
+            # Covers the timeout as well: an unreceipted activation committed
+            # nothing to report against.
+            logger.warning(
+                "Could not recover the interrupted durable attempt for execution %s",
+                request.execution_id,
+                exc_info=True,
+            )
+            return None
+
+    def _opener_only_capture(
+        self, request: ExecuteRequest, message: str
+    ) -> tuple[str, list[WorkflowMessage], int, None]:
+        """Build the turn's opener alone, for a Stop that beat the activation.
+
+        No attempt-local capture exists that early, but the opener is derivable
+        from the request — the same id and role the adapter scope seeds — and an
+        ordinal-zero report validates against an empty frontier.
+        """
+        opener_id = f"durable-input:{request.execution_id}"
+        return (
+            opener_id,
+            [
+                WorkflowMessage(
+                    id=opener_id,
+                    role=MESSAGE_ROLE_USER,
+                    content=json_to_proto_value(message),
+                )
+            ],
+            0,
+            None,
+        )
+
+    async def _report_cancelled_history(
+        self, oe_url: str, attempt: Any, history: Any, *, provisional: bool = False
+    ) -> None:
+        await self._send_cancelled_history(
+            oe_url, attempt, history.capture(), provisional=provisional
+        )
+
+    async def _send_cancelled_history(
+        self,
+        oe_url: str,
+        attempt: Any,
+        capture: tuple[str, list[WorkflowMessage], int, Optional[str]],
+        *,
+        provisional: bool = False,
+    ) -> None:
+        opener_id, messages, ordinal, source_hash = capture
+        async with AsyncWorkflowClient(oe_url, timeout=3.0) as client:
+            await client.report_cancelled_history(
+                cancelled_history_payload(
+                    attempt, opener_id, messages, ordinal, source_hash, provisional=provisional
+                )
+            )
+
+    async def _start_durable_attempt(
+        self, request: ExecuteRequest, start_request: "AttemptStartRequest | None"
+    ):
         """Ask OE to activate a fenced attempt, or return None for native routing.
 
-        None covers incomplete tenant identity and an old OE without workflow
-        routes (bare 404); any other failure propagates so the invocation
-        fails closed rather than running unfenced.
+        The caller computes ``start_request`` once, after agent materialization
+        registers the workflow adapter eligibility depends on; ``None`` there
+        is definitive — never re-derive it here. An old OE without workflow
+        routes (bare 404) also yields None; any other failure propagates so
+        the invocation fails closed rather than running unfenced.
         """
-        start_request = attempt_start_request_from_execute(
-            request,
-            session_id,
-            self._durability_owner_id,
-            self.runtime.app_name,
-            workflow_version=self.runtime.app_version,
-            memory_enabled=self.runtime.memory_enabled,
-        )
         if start_request is None:
             return None
         async with AsyncWorkflowClient(request.platform_api_url) as client:
             return await client.start_attempt(start_request)
+
+    async def _commit_cancelled_turn_coordinate(
+        self,
+        agent: Any,
+        ctx: Any,
+        agent_input: Any,
+        execution_id: str,
+        *,
+        durable_attempt: Any,
+        durable_eligibility_known: bool,
+        durable_start_request: Any,
+        durable_routing_resolved: bool,
+    ) -> Optional[dict[str, str]]:
+        """Commit the cancelled turn and return its checkpoint coordinate.
+
+        A cancelled run still owes history its final turn: the adapter commits
+        the last committed state plus a cancelled-turn marker so the playground
+        can serve it. Best-effort — a failure here must not change the
+        settlement path. The coordinate lets OE's branch-source selector fork
+        from the rescued marker: the runner is the only party that knows it.
+        """
+        try:
+            # An acquired attempt vetoes native history unconditionally.
+            # Eligibility not yet computed (teardown before agent
+            # materialization) or a lease call that never returned both
+            # leave the mode unknown — never write native history for
+            # what may be a durable run.
+            native_confirmed = (
+                durable_attempt is None
+                and durable_eligibility_known
+                and (durable_start_request is None or durable_routing_resolved)
+            )
+            if not (
+                native_confirmed
+                and self.drain_registry.drain_reason(execution_id)
+                == DrainReason.EXECUTION_CANCELLED
+            ):
+                return None
+            commit = getattr(agent, "commit_cancelled_turn", None)
+            if commit is None:
+                return None
+            coordinate = await asyncio.wait_for(
+                commit(ctx, agent_input),
+                timeout=CANCELLED_TURN_COMMIT_TIMEOUT_S,
+            )
+            if not isinstance(coordinate, dict):
+                return None
+            thread_id = coordinate.get("thread_id")
+            checkpoint_id = coordinate.get("checkpoint_id")
+            if not isinstance(thread_id, str) or not isinstance(checkpoint_id, str):
+                return None
+            return {"thread_id": thread_id, "checkpoint_id": checkpoint_id}
+        except Exception:
+            logger.warning(
+                "Failed to commit cancelled-turn checkpoint for execution %s",
+                execution_id,
+                exc_info=True,
+            )
+            return None
 
     async def _post_chunk_with_retries(
         self,
@@ -1791,7 +2138,9 @@ class AERServer(BaseServer):
             on_owner_failure=(discard_owner if owner_url else None),
         )
 
-    async def _release_finished_session(self, request: ExecuteRequest) -> None:
+    async def _release_finished_session(
+        self, request: ExecuteRequest, callback_body: Optional[dict[str, Any]] = None
+    ) -> None:
         """Ask the OE to free this session's compute now that the turn is over.
 
         Runs as a FastAPI background task, i.e. after the /execute response has
@@ -1800,7 +2149,12 @@ class AERServer(BaseServer):
         reason: either would otherwise die with the pod. Best-effort throughout
         - a failure just leaves the pods to the idle sweep.
         """
-        if not await self._callback_delivery.wait_for_terminal(request.execution_id):
+        origin = callback_body or {}
+        if not await self._callback_delivery.wait_for_terminal(
+            request.execution_id,
+            attempt_id=origin.get("attempt_id"),
+            attempt_fence=origin.get("attempt_fence"),
+        ):
             return
 
         writer = getattr(self.runtime, "_memory_writer", None)

@@ -411,6 +411,94 @@ class TestApp:
             "mcp_tool": "get-view-data",
         }
 
+    def test_get_tools_exposes_mcp_annotations(self, monkeypatch, tmp_path):
+        """AER get_tools() preserves metadata.annotations from tools/list."""
+        from agent_engine_runner_shared import RuntimeMode
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "agent.yaml").write_text(
+            "\n".join(
+                [
+                    "name: mcp-agent",
+                    "mcp:",
+                    "  servers:",
+                    "    github:",
+                    "      url: https://mcp.example.com/github",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        annotations = {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+            "title": "Search issues",
+        }
+
+        async def fake_list_server_tools(_server_name, _config):
+            return [
+                SimpleNamespace(
+                    name="search_issues",
+                    description="Search GitHub issues",
+                    inputSchema={"type": "object", "properties": {}},
+                    annotations=annotations,
+                )
+            ]
+
+        monkeypatch.setattr(
+            "agent_engine_runner_shared.mcp_tools._list_server_tools",
+            fake_list_server_tools,
+        )
+        app = App(app_name="MCP Agent")
+        app._runtime.mode = RuntimeMode.AER
+
+        raw = app._lc_tools["github__search_issues"]
+        assert raw.metadata == {"annotations": annotations}
+
+        wrapped = app.get_tools()[0]
+        assert wrapped.metadata == {"annotations": annotations}
+
+    def test_get_tools_omits_mcp_annotations_when_server_sent_none(
+        self, monkeypatch, tmp_path
+    ):
+        from agent_engine_runner_shared import RuntimeMode
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "agent.yaml").write_text(
+            "\n".join(
+                [
+                    "name: mcp-agent",
+                    "mcp:",
+                    "  servers:",
+                    "    github:",
+                    "      url: https://mcp.example.com/github",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        async def fake_list_server_tools(_server_name, _config):
+            return [
+                SimpleNamespace(
+                    name="search_issues",
+                    description="Search GitHub issues",
+                    inputSchema={"type": "object", "properties": {}},
+                )
+            ]
+
+        monkeypatch.setattr(
+            "agent_engine_runner_shared.mcp_tools._list_server_tools",
+            fake_list_server_tools,
+        )
+        app = App(app_name="MCP Agent")
+        app._runtime.mode = RuntimeMode.AER
+
+        raw = app._lc_tools["github__search_issues"]
+        assert not (raw.metadata or {}).get("annotations")
+        wrapped = app.get_tools()[0]
+        assert not (wrapped.metadata or {}).get("annotations")
+
     def test_init_skips_mcp_discovery_outside_aer_mode(self, monkeypatch, tmp_path):
         """Only AER discovers MCP schemas."""
         monkeypatch.chdir(tmp_path)
@@ -1216,7 +1304,7 @@ class TestApp:
         fake_client.list_database_names.return_value = ["mdb_agentic_store_proj1"]
         captured = {}
 
-        def _capture_saver(client, db_name):  # noqa: ANN001
+        def _capture_saver(client, db_name, **_kwargs):  # noqa: ANN001
             captured["db_name"] = db_name
             return MagicMock()
 
@@ -1262,7 +1350,7 @@ class TestApp:
         fake_client = MagicMock()
         captured = {}
 
-        def _capture_saver(client, db_name):  # noqa: ANN001
+        def _capture_saver(client, db_name, **_kwargs):  # noqa: ANN001
             captured["db_name"] = db_name
             return MagicMock()
 

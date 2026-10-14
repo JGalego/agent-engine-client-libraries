@@ -383,7 +383,9 @@ class _SuspendFixture:
             "agent_engine_sdk_adk.workflow.AsyncWorkflowClient",
             lambda _url: self.client,
         )
-        self.agent = ADKBaseAgent(adk_agent=MagicMock(), app_name="app")
+        self.agent = ADKBaseAgent(
+            adk_agent=MagicMock(retry_config=None), app_name="app"
+        )
         monkeypatch.setattr(
             "agent_engine_sdk_adk.agent.complete_durable_execution", _complete
         )

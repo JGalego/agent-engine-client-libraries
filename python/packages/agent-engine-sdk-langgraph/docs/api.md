@@ -32,6 +32,8 @@
   * [LangGraphBaseAgent](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent)
     * [\_\_init\_\_](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.__init__)
     * [execute](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.execute)
+    * [cancelled\_history\_scope](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.cancelled_history_scope)
+    * [commit\_cancelled\_turn](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.commit_cancelled_turn)
     * [invoke](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.invoke)
     * [resume](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.resume)
     * [stream](#agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.stream)
@@ -81,7 +83,9 @@ def __init__(app_name: str,
              enable_tracing: bool | None = None,
              traces_collection_name: str = "traces",
              enable_memory: bool | None = None,
-             org_id: str | None = None)
+             org_id: str | None = None,
+             checkpoint_allowed_types: Iterable[type | tuple[str, str]]
+             | None = None)
 ```
 
 Initialize the App.
@@ -99,6 +103,17 @@ Initialize the App.
   ``ORG_ID`` environment variable, which the platform injects.
   Passing this argument raises a DeprecationWarning and will be
   removed in a future release.
+- `checkpoint_allowed_types` - Custom classes, or ``(module, name)``
+  pairs, that checkpoint loads may reconstruct in addition to
+  LangGraph's built-in safe types. Unlisted types come back as
+  raw data. Each entry is called with stored checkpoint data,
+  so list only types that are safe to construct from it.
+
+
+**Raises**:
+
+- `TypeError` - If ``checkpoint_allowed_types`` is not an iterable of
+  classes and ``(module, name)`` string pairs.
 
 <a id="agent_engine_sdk_langgraph.runtime.App.agent_config"></a>
 
@@ -866,6 +881,40 @@ def execute(ctx: RequestContext, input: AgentInput) -> ExecutionResult
 ```
 
 Run the agent. Await for a result, or iterate for streaming.
+
+<a id="agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.cancelled_history_scope"></a>
+
+#### cancelled\_history\_scope
+
+```python
+@contextmanager
+def cancelled_history_scope(ctx: RequestContext,
+                            input: AgentInput) -> Iterator[CancelledHistory]
+```
+
+Expose cancellation capture without a runner dependency on LangGraph.
+
+<a id="agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.commit_cancelled_turn"></a>
+
+#### commit\_cancelled\_turn
+
+```python
+async def commit_cancelled_turn(ctx: RequestContext,
+                                input: AgentInput) -> "dict[str, str] | None"
+```
+
+Checkpoint the cancelled turn so session history can serve it.
+
+Invoked by runner-shared when an execution-cancelled drain tears down
+invoke/stream. No-op for durable sessions: their history is OE-owned
+and scratch checkpoints are discarded by design. The is_durable check
+is a backstop — the caller gates on the attempt it started, because by
+teardown the attempt context may already be closing.
+
+Returns the committed checkpoint's coordinate (``thread_id`` +
+``checkpoint_id``) so the runner can report it to OE — the branch
+source selector needs it to fork from a session whose only checkpoint
+is this rescued marker — or ``None`` when nothing was committed.
 
 <a id="agent_engine_sdk_langgraph.agent.LangGraphBaseAgent.invoke"></a>
 

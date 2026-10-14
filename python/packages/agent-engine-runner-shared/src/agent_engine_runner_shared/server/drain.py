@@ -285,6 +285,14 @@ class DrainRegistry:
                 detail=DrainReasonCode.EXECUTION_DRAINING.value,
             )
 
+    def cancellation_report_budget(self, execution_id: str) -> float:
+        """Return time available only for an explicit execution-cancel drain."""
+        entry = self._entries.get(execution_id)
+        record = entry.drain if entry is not None else None
+        if record is None or record.reason != DrainReason.EXECUTION_CANCELLED:
+            return 0.0
+        return max(0.0, min(3.0, record.deadline_at_ms / 1000 - time.time()))
+
     def _capture_owner_loop(self) -> None:
         if self._owner_loop is not None:
             return
@@ -516,6 +524,18 @@ class DrainRegistry:
         # tombstone (and any finalized drain record) expires on the TTL.
         if entry.drain is None or entry.drain.outcome is not None:
             self._schedule_eviction(handle.execution_id, entry)
+
+    def drain_reason(self, execution_id: str) -> Optional[DrainReason]:
+        """Reason of the drain applied to this execution, if one has landed.
+
+        Execute-teardown reads this to tell an execution-cancelled drain (the
+        turn must still be checkpointed for history) from a rolling restart or
+        a plain timeout, which leave the checkpoint store alone.
+        """
+        entry = self._entries.get(execution_id)
+        if entry is None or entry.drain is None:
+            return None
+        return entry.drain.reason
 
     def _release_unattached(self, handle: WorkHandle) -> None:
         if handle.done or handle.attached:

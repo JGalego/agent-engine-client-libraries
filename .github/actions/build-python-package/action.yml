@@ -1,0 +1,20 @@
+name: build-python-package
+description: Build one Python SDK package's distributions into dist/ for the PyPI publish action.
+
+inputs:
+  name:
+    description: Distribution name (e.g. agent-engine-sdk)
+    required: true
+  directory:
+    description: Directory under python/packages/
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Build distribution
+      shell: bash
+      env:
+        DISTRIBUTION_NAME: ${{ inputs.name }}
+        PACKAGE_DIRECTORY: ${{ inputs.directory }}
+      run: ./scripts/build-python-package.sh --name "$DISTRIBUTION_NAME" --directory "$PACKAGE_DIRECTORY" --out-dir dist

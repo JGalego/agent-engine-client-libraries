@@ -11,6 +11,7 @@ import type {
   StreamingResult,
 } from "../../src/models.js";
 import { AERServer } from "../../src/server/aer.js";
+import type { DrainRegistry } from "../../src/server/drain.js";
 import type { ITenantRuntime } from "../../src/server/base.js";
 import type { TurnMemoryWriter } from "../../src/memory_writer.js";
 import { SecureToolWrapper } from "../../src/secure_wrapper.js";
@@ -24,6 +25,8 @@ import {
   TenantScopeSchema,
   WorkflowIdentitySchema,
   currentAttemptContext,
+  currentCancelledHistory,
+  WorkflowClient,
 } from "../../src/workflow/index.js";
 
 interface TestServer {
@@ -32,6 +35,7 @@ interface TestServer {
   chunkSeq: Map<string, number>;
   ownerCallbackUrl: Map<string, string>;
   pendingSessionFinish: Set<string>;
+  drainRegistry: DrainRegistry;
   executeViaAgentStream: ReturnType<typeof vi.fn>;
   sendStreamChunk: ReturnType<typeof vi.fn>;
   reportCallback: ReturnType<typeof vi.fn>;
@@ -39,6 +43,7 @@ interface TestServer {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -147,6 +152,318 @@ function makeServer(
 }
 
 describe("AER durable attempt lifecycle", () => {
+  test.each([50, 5000])(
+    "bounds cancellation history delivery by the deadline and 3s cap (%sms)",
+    async (windowMs) => {
+      vi.useFakeTimers();
+      stubDurableAttemptStart();
+      let entered!: () => void;
+      const reportEntered = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      vi.spyOn(
+        WorkflowClient.prototype,
+        "reportCancelledHistory",
+      ).mockImplementation(() => {
+        entered();
+        return new Promise<void>(() => {});
+      });
+      const server = makeServer(true);
+      server.runtime.getAgent = () => {
+        registerWorkflowAdapter("langgraph", "1");
+        return {
+          captureCancelledHistory: () =>
+            currentCancelledHistory()?.capture() ?? null,
+        } as unknown as ReturnType<ITenantRuntime["getAgent"]>;
+      };
+      server.drainRegistry.beginWork("execution");
+      server.executeViaAgentStream.mockImplementation(async () => {
+        server.drainRegistry.apply({
+          execution_id: "execution",
+          request_id: "bounded-report",
+          reason: "execution_cancelled",
+          deadline_at_ms: Date.now() + windowMs,
+        });
+        throw new Error("stopped");
+      });
+      try {
+        let settled = false;
+        const pending = server
+          .doHandleExecute(executeRequest())
+          .then((result) => {
+            settled = true;
+            return result;
+          });
+        await reportEntered;
+        const bound = Math.min(windowMs, 3000);
+        await vi.advanceTimersByTimeAsync(bound - 1);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await pending).toEqual({ status: "cancelled" });
+        expect(server.reportCallback).not.toHaveBeenCalled();
+      } finally {
+        server.drainRegistry.endWork("execution");
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("does not retain cancelled history for native-checkpoint executions", async () => {
+    const report = vi
+      .spyOn(WorkflowClient.prototype, "reportCancelledHistory")
+      .mockResolvedValue(undefined);
+    const server = makeServer(true, false);
+    server.runtime.getAgent = () =>
+      ({
+        captureCancelledHistory: () => {
+          throw new Error("native capture must not run");
+        },
+      }) as unknown as ReturnType<ITenantRuntime["getAgent"]>;
+    server.drainRegistry.beginWork("execution");
+    server.executeViaAgentStream.mockImplementation(async () => {
+      server.drainRegistry.apply({
+        execution_id: "execution",
+        request_id: "native-stop",
+        reason: "execution_cancelled",
+        deadline_at_ms: Date.now() + 5000,
+      });
+      throw new Error("stopped");
+    });
+    try {
+      expect(await server.doHandleExecute(executeRequest())).toEqual({
+        status: "cancelled",
+      });
+      expect(report).not.toHaveBeenCalled();
+    } finally {
+      server.drainRegistry.endWork("execution");
+    }
+  });
+
+  test.each(["execution_cancelled", "rolling_restart", "ordinary"] as const)(
+    "retains display history only for durable execution cancellation (%s)",
+    async (reason) => {
+      stubDurableAttemptStart();
+      const report = vi
+        .spyOn(WorkflowClient.prototype, "reportCancelledHistory")
+        .mockResolvedValue(undefined);
+      const server = makeServer(true);
+      server.runtime.getAgent = () => {
+        registerWorkflowAdapter("langgraph", "1");
+        return {
+          captureCancelledHistory: () =>
+            currentCancelledHistory()?.capture() ?? null,
+        } as unknown as ReturnType<ITenantRuntime["getAgent"]>;
+      };
+      server.drainRegistry.beginWork("execution");
+      server.executeViaAgentStream.mockImplementation(async () => {
+        if (reason !== "ordinary") {
+          server.drainRegistry.apply({
+            execution_id: "execution",
+            request_id: "cancel-history",
+            reason,
+            deadline_at_ms: Date.now() + 5000,
+          });
+        }
+        throw new Error("stopped");
+      });
+      try {
+        if (reason === "ordinary") {
+          await expect(
+            server.doHandleExecute(executeRequest()),
+          ).rejects.toThrow("stopped");
+        } else {
+          expect(await server.doHandleExecute(executeRequest())).toEqual({
+            status: "cancelled",
+          });
+        }
+        if (reason === "execution_cancelled") {
+          expect(report).toHaveBeenCalledTimes(1);
+          expect(report.mock.calls[0]?.[0]).toMatchObject({
+            opener_message_id: "durable-input:execution",
+            accepted_step_ordinal: "0",
+            messages: [{ content: "hello", id: "durable-input:execution" }],
+          });
+          expect(server.reportCallback).not.toHaveBeenCalled();
+        } else {
+          expect(report).not.toHaveBeenCalled();
+        }
+      } finally {
+        server.drainRegistry.endWork("execution");
+      }
+    },
+  );
+
+  test("retains the opener when a Stop lands during initial heartbeat activation", async () => {
+    // The reporting finally cannot run until the initial renewal settles, and
+    // OE's drain window is shorter than the transport timeout. A Stop must
+    // therefore interrupt the renewal in flight, or the stopped turn is dropped
+    // even though the Stop was delivered. The renewal here is held pending and
+    // never released: only the drain can end it.
+    vi.useFakeTimers();
+    const attempt = create(AttemptContextSchema, {
+      attemptId: "attempt",
+      fencingToken: 8n,
+      ownerId: "owner",
+      workflowIdentity: identity(),
+      heartbeatIntervalMs: 60_000n,
+    });
+    let renewalEntered!: () => void;
+    const renewalStarted = new Promise<void>((resolve) => {
+      renewalEntered = resolve;
+    });
+    let heartbeatRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/executor/attempt/start") {
+          return new Response(
+            JSON.stringify(
+              toJson(
+                AttemptStartResponseSchema,
+                create(AttemptStartResponseSchema, { attemptContext: attempt }),
+                { useProtoFieldName: true },
+              ),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (path === "/executor/attempt/heartbeat") {
+          heartbeatRequests += 1;
+          renewalEntered();
+          const signal = init?.signal;
+          return new Promise<Response>((_resolve, reject) => {
+            if (signal?.aborted === true) {
+              reject(signal.reason);
+              return;
+            }
+            signal?.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          });
+        }
+        throw new Error(`unexpected request to ${path}`);
+      }),
+    );
+    const report = vi
+      .spyOn(WorkflowClient.prototype, "reportCancelledHistory")
+      .mockResolvedValue(undefined);
+
+    const server = makeServer(true);
+    server.runtime.getAgent = () => {
+      registerWorkflowAdapter("langgraph", "1");
+      return {
+        captureCancelledHistory: () =>
+          currentCancelledHistory()?.capture() ?? null,
+      } as unknown as ReturnType<ITenantRuntime["getAgent"]>;
+    };
+    server.drainRegistry.beginWork("execution");
+    try {
+      const pending = server.doHandleExecute(executeRequest());
+      await renewalStarted;
+      server.drainRegistry.apply({
+        execution_id: "execution",
+        request_id: "stop-during-activation",
+        reason: "execution_cancelled",
+        deadline_at_ms: Date.now() + 3000,
+      });
+      await expect(pending).resolves.toEqual({ status: "cancelled" });
+      // No tenant code ran, and the drain stages no terminal callback.
+      expect(server.executeViaAgentStream).not.toHaveBeenCalled();
+      expect(server.reportCallback).not.toHaveBeenCalled();
+      expect(report).toHaveBeenCalledTimes(1);
+      expect(report.mock.calls[0]?.[0]).toMatchObject({
+        opener_message_id: "durable-input:execution",
+        accepted_step_ordinal: "0",
+        messages: [
+          {
+            role: "MESSAGE_ROLE_USER",
+            content: "hello",
+            id: "durable-input:execution",
+          },
+        ],
+      });
+      // No heartbeat survives activation: the interval never renews again.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(heartbeatRequests).toBe(1);
+    } finally {
+      server.drainRegistry.endWork("execution");
+      vi.useRealTimers();
+    }
+  });
+
+  test("reports provisional display history when a durable execution suspends", async () => {
+    // A suspension ends the attempt, so a later Stop finds no execute handler:
+    // the AER reports the display transcript now, marked provisional.
+    stubDurableAttemptStart();
+    const report = vi
+      .spyOn(WorkflowClient.prototype, "reportCancelledHistory")
+      .mockResolvedValue(undefined);
+    const server = makeServer(true);
+    server.runtime.getAgent = () => {
+      registerWorkflowAdapter("langgraph", "1");
+      return {
+        captureCancelledHistory: () =>
+          currentCancelledHistory()?.capture() ?? null,
+      } as unknown as ReturnType<ITenantRuntime["getAgent"]>;
+    };
+    server.executeViaAgentStream = vi.fn(async () => {
+      return {
+        suspend_payload: {
+          suspend_reason: "awaiting_human_review",
+          suspend_context: {},
+        },
+        metadata: {},
+      } as InterruptResult;
+    });
+    server.reportCallback = vi.fn(async () => {});
+
+    await expect(
+      server.doHandleExecute(executeRequest()),
+    ).resolves.toMatchObject({
+      status: "suspended",
+    });
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report.mock.calls[0]?.[0]).toMatchObject({
+      opener_message_id: "durable-input:execution",
+      provisional: true,
+    });
+  });
+
+  test("cancelled history transport failures do not change cancellation settlement", async () => {
+    stubDurableAttemptStart();
+    vi.spyOn(
+      WorkflowClient.prototype,
+      "reportCancelledHistory",
+    ).mockRejectedValue(new Error("transport unavailable"));
+    const server = makeServer(true);
+    server.runtime.getAgent = () => {
+      registerWorkflowAdapter("langgraph", "1");
+      return {
+        captureCancelledHistory: () =>
+          currentCancelledHistory()?.capture() ?? null,
+      } as unknown as ReturnType<ITenantRuntime["getAgent"]>;
+    };
+    server.drainRegistry.beginWork("execution");
+    server.executeViaAgentStream.mockImplementation(async () => {
+      server.drainRegistry.apply({
+        execution_id: "execution",
+        request_id: "failed-report",
+        reason: "execution_cancelled",
+        deadline_at_ms: Date.now() + 5000,
+      });
+      throw new Error("stopped");
+    });
+    try {
+      expect(await server.doHandleExecute(executeRequest())).toEqual({
+        status: "cancelled",
+      });
+      expect(server.reportCallback).not.toHaveBeenCalled();
+    } finally {
+      server.drainRegistry.endWork("execution");
+    }
+  });
+
   test("materializes the adapter, binds the OE attempt, and heartbeats", async () => {
     vi.stubEnv("APP_ID", "workspace");
     const attempt = create(AttemptContextSchema, {
@@ -229,6 +546,10 @@ describe("AER durable attempt lifecycle", () => {
     ]);
     expect(delivered).toHaveLength(1);
     expect(delivered[0]?.suspend_generation).toBe(7);
+    expect(delivered[0]).toMatchObject({
+      attempt_id: "attempt",
+      attempt_fence: 8,
+    });
     expect(settlementOrder).toEqual(["wrapper-close", "callback"]);
   });
 
@@ -704,9 +1025,17 @@ describe("AER durable attempt lifecycle", () => {
     server.executeViaAgentStream = vi.fn(async () => {
       throw executionError;
     });
-    server.reportCallback = vi.fn(async () => {
-      settlementOrder.push("callback");
-    });
+    server.reportCallback = vi.fn(
+      async (_url, _id, _status, _fields, callback) => {
+        expect(callback).toMatchObject({
+          status: "ERROR",
+          attempt_id: "attempt",
+          attempt_fence: 8,
+          error: "execution-failed",
+        });
+        settlementOrder.push("callback");
+      },
+    );
 
     await expect(server.doHandleExecute(executeRequest())).rejects.toBe(
       executionError,

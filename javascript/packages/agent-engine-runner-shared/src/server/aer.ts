@@ -11,6 +11,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
+import { fromJson } from "@bufbuild/protobuf";
 import {
   JsonValueSchema,
   type AgentInput,
@@ -57,11 +58,21 @@ import {
   AttemptHeartbeat,
   DurableMemoryState,
   WorkflowClient,
+  cancelledHistoryReport,
+  currentCancelledHistory,
+  reportCancelledHistoryBeforeCleanup,
+  type CancelledHistoryCapture,
+  type CancelledHistoryProvider,
+  WorkflowMessageSchema,
   attemptStartRequestFromExecute,
   newDurabilityOwnerId,
   runWithAttemptContext,
   validateDurableMemoryIdentity,
 } from "../workflow/index.js";
+import type {
+  AttemptContext,
+  AttemptStartRequest,
+} from "../generated/workflow/v1/runtime_pb.js";
 import {
   closeAllTLSAgents,
   fetchPlatform,
@@ -120,6 +131,36 @@ const CAPABILITY_ADVERTISE_TIMEOUT_MS = 10_000;
 // Bounded wait for queued Memory writes before asking OE to release a finished
 // session. Mirrors the Python AER contract.
 const SESSION_FINISH_MEMORY_DRAIN_TIMEOUT_MS = 10_000;
+const CANCELLED_HISTORY_TIMEOUT_MS = 3_000;
+
+// Bound on the cancelled-turn checkpoint write during drain teardown. The OE's
+// cancel drain deadline is 5s and the write is one Mongo upsert; 3s leaves the
+// remaining settlement phases their share. Mirrors Python's
+// CANCELLED_TURN_COMMIT_TIMEOUT_S.
+const CANCELLED_TURN_COMMIT_TIMEOUT_MS = 3000;
+
+/** Reject after CANCELLED_TURN_COMMIT_TIMEOUT_MS when the cancelled-turn
+ * checkpoint write has not settled; a no-op for agents without the hook.
+ * Resolves with the work's value — the commit's checkpoint coordinate. */
+async function withCancelledTurnDeadline(
+  work: Promise<unknown> | undefined,
+): Promise<unknown> {
+  if (work === undefined) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("cancelled-turn commit timed out")),
+          CANCELLED_TURN_COMMIT_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 // `language` fallback when agent.yaml omits it — how the TS SDK identifies
 // itself to OE (mirrors agent.yaml's own `language: typescript` convention
@@ -241,10 +282,10 @@ function getOwnerCallbackUrls(server: {
 }
 
 function getPendingSessionFinishes(server: {
-  pendingSessionFinish?: Set<string>;
-}): Set<string> {
-  if (!(server.pendingSessionFinish instanceof Set)) {
-    server.pendingSessionFinish = new Set();
+  pendingSessionFinish?: Map<string, ExecutorCallbackRequest>;
+}): Map<string, ExecutorCallbackRequest> {
+  if (!(server.pendingSessionFinish instanceof Map)) {
+    server.pendingSessionFinish = new Map();
   }
   return server.pendingSessionFinish;
 }
@@ -276,6 +317,8 @@ interface ResolvedInvocationParams {
 }
 
 interface ExecutorCallbackFields {
+  attempt_id?: string;
+  attempt_fence?: number;
   suspend_generation?: number;
   result?: unknown;
   error?: string;
@@ -295,6 +338,8 @@ function buildExecutorCallback(
   const callback = ExecutorCallbackRequestSchema.parse({
     execution_id: executionId,
     status,
+    attempt_id: fields.attempt_id,
+    attempt_fence: fields.attempt_fence,
     suspend_generation: fields.suspend_generation,
     result: fields.result,
     error: fields.error,
@@ -396,7 +441,7 @@ export class AERServer extends BaseServer {
   private callbackDelivery = new CallbackDelivery();
   // Executions whose agent called finishSession() and completed normally;
   // drained by the /execute route once the response has been flushed.
-  pendingSessionFinish: Set<string> = new Set();
+  pendingSessionFinish: Map<string, ExecutorCallbackRequest> = new Map();
   private readonly durabilityOwnerId = newDurabilityOwnerId();
   // One-shot capability advertise, mirrors Python's `_capabilities_advertised`.
   // Set only after OE accepts the declaration.
@@ -536,14 +581,18 @@ export class AERServer extends BaseServer {
       try {
         const result = await this.handleExecute(body);
         const responseBody = AERExecuteResponseSchema.parse(result);
-        if (getPendingSessionFinishes(this).delete(body.execution_id)) {
+        const finishCallback = getPendingSessionFinishes(this).get(
+          body.execution_id,
+        );
+        getPendingSessionFinishes(this).delete(body.execution_id);
+        if (finishCallback !== undefined) {
           // After the response is flushed, never before: the OE blocks on this
           // call and turns a transport error into a 502 that overwrites the
           // finished run's result. Guard on status too - an error thrown or a
           // client disconnect after this point must not still release.
           reply.raw.once("finish", () => {
             if (reply.raw.statusCode < 400) {
-              void this.releaseFinishedSession(body);
+              void this.releaseFinishedSession(body, finishCallback);
             }
           });
         }
@@ -617,6 +666,82 @@ export class AERServer extends BaseServer {
         }
       },
     );
+  }
+
+  private async reportCancelledHistory(
+    request: ExecuteRequest,
+    attempt: AttemptContext,
+    agent: BaseAgent,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!signal.aborted || signal.reason !== DRAIN_ABORT_REASON) return;
+    const deadline = this.drainRegistry.cancellationDeadline(
+      request.execution_id,
+    );
+    if (deadline === null) return;
+    const provider = agent as BaseAgent & Partial<CancelledHistoryProvider>;
+    if (typeof provider.captureCancelledHistory !== "function") return;
+    const reportDeadline = Math.min(
+      deadline,
+      Date.now() + CANCELLED_HISTORY_TIMEOUT_MS,
+    );
+    if (reportDeadline <= Date.now()) return;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const capture = provider.captureCancelledHistory();
+      if (capture === null) return;
+      const report = cancelledHistoryReport(attempt, capture);
+      const timeoutMs = reportDeadline - Date.now();
+      if (timeoutMs <= 0) return;
+      await Promise.race([
+        new WorkflowClient(request.platform_api_url, {
+          timeoutMs,
+        }).reportCancelledHistory(report),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("cancelled history deadline exceeded")),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      logger.warn(
+        `Failed to retain cancelled execution history (${error instanceof Error ? error.name : typeof error})`,
+      );
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  private async reportSuspendedHistory(
+    request: ExecuteRequest,
+    attempt: AttemptContext,
+    capture: CancelledHistoryCapture,
+  ): Promise<void> {
+    // A suspended execution ends its attempt, so a later Stop finds no execute
+    // handler: report the display transcript now so it survives cancellation.
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const report = cancelledHistoryReport(attempt, capture, true);
+      const timeoutMs = CANCELLED_HISTORY_TIMEOUT_MS;
+      await Promise.race([
+        new WorkflowClient(request.platform_api_url, {
+          timeoutMs,
+        }).reportCancelledHistory(report),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("suspended history deadline exceeded")),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      logger.warn(
+        `Failed to retain suspended execution history (${error instanceof Error ? error.name : typeof error})`,
+      );
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   private handleExecute = withMetrics(
@@ -705,15 +830,24 @@ export class AERServer extends BaseServer {
     // point (between admission and here), the attach aborts immediately.
     this.drainRegistry.attachController(request.execution_id, abortController);
 
+    let durableAttempt: AttemptContext | null = null;
     let pendingCallback: ExecutorCallbackRequest | undefined;
     const stageCallback = (
       status: string,
       fields: ExecutorCallbackFields = {},
-    ): void => {
+    ): ExecutorCallbackRequest => {
       pendingCallback = buildExecutorCallback(request.execution_id, status, {
         ...fields,
+        ...(durableAttempt !== null &&
+        (status === "COMPLETED" || status === "ERROR")
+          ? {
+              attempt_id: durableAttempt.attemptId,
+              attempt_fence: Number(durableAttempt.fencingToken),
+            }
+          : {}),
         suspend_generation: request.suspend_generation ?? undefined,
       });
+      return pendingCallback;
     };
 
     let cleanupError: unknown;
@@ -779,7 +913,77 @@ export class AERServer extends BaseServer {
           signal: abortController.signal,
         };
 
+        // AgentInput.payload is the opaque caller blob, with the resolved
+        // message normalized in. Platform plumbing (identity, resume,
+        // checkpoint) travels on ctx, not here.
+        const agentInput: AgentInput = {
+          payload: {
+            ...(request.payload ?? {}),
+            message,
+          } as JsonValue,
+        };
+
+        // Native-vs-durable eligibility is decidable without I/O, but only
+        // once the agent is materialized — building the graph is what
+        // registers (or clears) the workflow adapter eligibility consults.
+        // Until then the routing mode is unknown (undefined), and an unknown
+        // mode never writes native history.
+        let durableStartRequest: AttemptStartRequest | null | undefined;
+        let agent: BaseAgent | undefined;
+        let durableRoutingResolved = false;
         let heartbeat: AttemptHeartbeat | null = null;
+
+        // A cancelled run still owes history its final turn — including a stop
+        // landing during preparation, before the stream starts. Best-effort:
+        // never changes the settlement path.
+        const commitCancelledTurnBestEffort = async (): Promise<void> => {
+          // An acquired attempt vetoes native history unconditionally.
+          // Eligibility not yet computed (teardown before agent
+          // materialization) or a lease call that never returned both leave
+          // the mode unknown — never write native history for what may be a
+          // durable run.
+          const nativeConfirmed =
+            durableAttempt === null &&
+            durableStartRequest !== undefined &&
+            (durableStartRequest === null || durableRoutingResolved);
+          if (
+            !nativeConfirmed ||
+            this.drainRegistry.drainReason(request.execution_id) !==
+              "execution_cancelled"
+          ) {
+            return;
+          }
+          try {
+            const coordinate = await withCancelledTurnDeadline(
+              agent?.commitCancelledTurn?.(ctx, agentInput),
+            );
+            // The coordinate rides the existing executor-callback metadata
+            // channel: OE's terminal guard persists it for the branch-source
+            // selector — the runner is the only party that knows it.
+            if (
+              coordinate !== null &&
+              typeof coordinate === "object" &&
+              typeof (coordinate as { thread_id?: unknown }).thread_id ===
+                "string" &&
+              typeof (coordinate as { checkpoint_id?: unknown })
+                .checkpoint_id === "string"
+            ) {
+              stageCallback("CANCELLED", {
+                metadata: {
+                  langgraph_checkpoint: coordinate as {
+                    thread_id: string;
+                    checkpoint_id: string;
+                  },
+                },
+              });
+            }
+          } catch (commitErr) {
+            logger.warn(
+              { err: commitErr, execution_id: request.execution_id },
+              "cancelled-turn checkpoint commit failed",
+            );
+          }
+        };
         try {
           // Register the owner callback URL inside the same try whose finally
           // pops it, so a failure between here and the first
@@ -788,16 +992,6 @@ export class AERServer extends BaseServer {
           if (ownerUrl) {
             getOwnerCallbackUrls(this).set(request.execution_id, ownerUrl);
           }
-
-          // AgentInput.payload is the opaque caller blob, with the resolved
-          // message normalized in. Platform plumbing (identity, resume,
-          // checkpoint) travels on ctx, not here.
-          const agentInput: AgentInput = {
-            payload: {
-              ...(request.payload ?? {}),
-              message,
-            } as JsonValue,
-          };
 
           if (request.resume) {
             logger.info(
@@ -825,7 +1019,7 @@ export class AERServer extends BaseServer {
             sessionId.slice(0, 8),
           );
 
-          const agent = getTracer("runner-shared.aer").startActiveSpan(
+          agent = getTracer("runner-shared.aer").startActiveSpan(
             AER_BUILD_AGENT,
             {
               attributes: {
@@ -841,13 +1035,27 @@ export class AERServer extends BaseServer {
             },
           );
 
-          // Materialize the adapter before asking OE for an attempt. Missing
-          // identity, an old OE (bare 404), or an ineligible framework stays
-          // native; other start failures fail closed before tenant work.
-          const durableAttempt = await this.startDurableAttempt(
+          // Materializing the agent registered (or cleared) the workflow
+          // adapter, so eligibility is decidable here — before the first
+          // preparation await — even on this worker's first request.
+          durableStartRequest = attemptStartRequestFromExecute(
             request,
             sessionId,
+            this.durabilityOwnerId,
+            this.runtime.appName,
+            this.runtime.appVersion,
+            // != null: memoryWriter is optional, and the declaration must agree
+            // with the wrapper setup guard on absent vs disabled writers.
+            this.runtime.memoryWriter != null,
           );
+
+          // Lease the attempt before tenant work. An old OE (bare 404) stays
+          // native; other start failures fail closed.
+          durableAttempt = await this.startDurableAttempt(
+            request,
+            durableStartRequest,
+          );
+          durableRoutingResolved = true;
           if (durableAttempt !== null && this.runtime.memoryWriter != null) {
             // != null (not !==): memoryWriter is optional, and an absent
             // writer must behave like a disabled one.
@@ -871,24 +1079,66 @@ export class AERServer extends BaseServer {
               ? null
               : new AttemptHeartbeat(
                   durableAttempt,
-                  new WorkflowClient(request.platform_api_url),
+                  // Bind the execution signal so a Stop cancels the initial
+                  // renewal in flight: the reporting finally cannot run until
+                  // that await settles, and OE's drain window is shorter than
+                  // the transport timeout.
+                  new WorkflowClient(request.platform_api_url, {
+                    signal: abortController.signal,
+                  }),
                 );
-          if (heartbeat !== null) await heartbeat.start();
-
+          let suspendedCapture: CancelledHistoryCapture | null = null;
           let executionOutcome: InterruptResult | StreamingResult;
           try {
+            // agent is assigned by the build step above (getAgent throws
+            // rather than returning undefined); the declared type stays wide
+            // only because the teardown closure may run before the build.
+            const builtAgent: BaseAgent = agent;
+            // Bound once so the reporting closure below keeps the non-null
+            // narrowing the ternary establishes.
+            const activeAttempt = durableAttempt;
             const execute = () =>
               this.executeViaAgentStream(
-                agent,
+                builtAgent,
                 ctx,
                 agentInput,
                 request.platform_api_url,
                 request.execution_id,
               );
             executionOutcome =
-              durableAttempt === null
+              activeAttempt === null
                 ? await execute()
-                : await runWithAttemptContext(durableAttempt, execute);
+                : await runWithAttemptContext(activeAttempt, async () => {
+                    const history = currentCancelledHistory();
+                    if (history !== null) {
+                      const opener = fromJson(WorkflowMessageSchema, {
+                        role: "MESSAGE_ROLE_USER",
+                        content: message,
+                        id: `durable-input:${request.execution_id}`,
+                      });
+                      history.setInput(opener);
+                      history.reporter = () =>
+                        this.reportCancelledHistory(
+                          request,
+                          activeAttempt,
+                          builtAgent,
+                          abortController.signal,
+                        );
+                    }
+                    try {
+                      // Tenant code stays behind successful activation, but the
+                      // capture above must already be in place: a Stop during
+                      // this await makes OE refuse the renewal (a cancelled
+                      // execution cannot renew), and the finally below is the
+                      // only path that reports the turn's opener.
+                      if (heartbeat !== null) await heartbeat.start();
+                      return await execute();
+                    } finally {
+                      if (history !== null)
+                        suspendedCapture = history.capture();
+                      await reportCancelledHistoryBeforeCleanup();
+                    }
+                  });
           } catch (err) {
             // The controller fires for the execution-timeout setTimeout and
             // for a drain. A drain is a cancellation, not a deadline breach —
@@ -974,6 +1224,14 @@ export class AERServer extends BaseServer {
               "AER",
             );
 
+            if (durableAttempt !== null && suspendedCapture !== null) {
+              await this.reportSuspendedHistory(
+                request,
+                durableAttempt,
+                suspendedCapture,
+              );
+            }
+
             if (this.runtime.memoryWriter && durableAttempt === null) {
               try {
                 this.runtime.memoryWriter.writeTurnAsync({
@@ -1039,7 +1297,7 @@ export class AERServer extends BaseServer {
             );
           }
 
-          stageCallback("COMPLETED", {
+          const completedCallback = stageCallback("COMPLETED", {
             result: executionOutcome.content,
             metadata: executionOutcome.metadata,
           });
@@ -1048,7 +1306,10 @@ export class AERServer extends BaseServer {
             // this /execute call and turns a transport error into a 502 that
             // overwrites the finished run's result, so the session's pods
             // must not be killed before the response is delivered.
-            getPendingSessionFinishes(this).add(request.execution_id);
+            getPendingSessionFinishes(this).set(
+              request.execution_id,
+              completedCallback,
+            );
           }
           return { status: "completed", result: executionOutcome.content };
         } catch (err) {
@@ -1080,6 +1341,10 @@ export class AERServer extends BaseServer {
             logger.debug(
               `AER: execution ${request.execution_id.slice(0, 8)} cancelled (drain or teardown)`,
             );
+            // Single commit site for every cancelled path (stream-phase and
+            // preparation): the staged CANCELLED callback carries the
+            // rescued checkpoint's coordinate for OE's branch-source selector.
+            await commitCancelledTurnBestEffort();
             return { status: "cancelled" };
           }
           // A policy denial is a deliberate, terminal outcome. Attach a
@@ -1322,25 +1587,17 @@ export class AERServer extends BaseServer {
   /**
    * Ask OE to activate a fenced attempt, or return null for native routing.
    *
-   * Null covers incomplete tenant identity, a framework that never registered
-   * a workflow adapter, and an old OE without workflow routes (bare 404). Any
-   * other failure propagates so the invocation fails closed rather than
-   * running unfenced.
+   * The start request arrives precomputed after agent materialization (the
+   * step that registers the workflow adapter): null there is definitive —
+   * incomplete tenant identity or a framework without an adapter — and is
+   * never re-derived here. An old OE without workflow routes (bare 404) also
+   * yields null. Any other failure propagates so the invocation fails closed
+   * rather than running unfenced.
    */
   private async startDurableAttempt(
     request: ExecuteRequest,
-    sessionId: string,
+    startRequest: AttemptStartRequest | null,
   ) {
-    const startRequest = attemptStartRequestFromExecute(
-      request,
-      sessionId,
-      this.durabilityOwnerId,
-      this.runtime.appName,
-      this.runtime.appVersion,
-      // != null: memoryWriter is optional, and the declaration must agree
-      // with the wrapper setup guard on absent vs disabled writers.
-      this.runtime.memoryWriter != null,
-    );
     if (startRequest === null) return null;
     return new WorkflowClient(request.platform_api_url).startAttempt(
       startRequest,
@@ -1586,8 +1843,19 @@ export class AERServer extends BaseServer {
    * cannot destroy their only in-memory copies. Best-effort: a failure just
    * leaves the pods to the idle sweep.
    */
-  private async releaseFinishedSession(request: ExecuteRequest): Promise<void> {
-    if (!(await this.callbackDelivery.waitForTerminal(request.execution_id))) {
+  private async releaseFinishedSession(
+    request: ExecuteRequest,
+    callback: ExecutorCallbackRequest = {
+      execution_id: request.execution_id,
+      status: "COMPLETED",
+    },
+  ): Promise<void> {
+    if (
+      !(await this.callbackDelivery.waitForTerminal(
+        request.execution_id,
+        callback,
+      ))
+    ) {
       return;
     }
 

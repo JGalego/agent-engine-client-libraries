@@ -16,6 +16,10 @@ from agent_engine_sdk import (
     StreamEvent,
 )
 from agents import Agent, RunConfig, Runner, RunState
+from agents.exceptions import (
+    InputGuardrailTripwireTriggered,
+    OutputGuardrailTripwireTriggered,
+)
 from agents.result import RunResultStreaming
 from openai.types.responses import ResponseTextDeltaEvent
 
@@ -25,6 +29,7 @@ from agent_engine_runner_shared.workflow.settlement import (
     SettledExecutionError,
     settle_execution,
 )
+from agent_engine_sdk_openai_agents.agent_tools import forget_stopped_runs
 from agent_engine_sdk_openai_agents.approvals import (
     ApprovalDecision,
     PendingApproval,
@@ -37,7 +42,9 @@ from agent_engine_sdk_openai_agents.errors import (
     UnsupportedDurableOpenAIAgentsError,
 )
 from agent_engine_sdk_openai_agents.graph import agent_graph
+from agent_engine_sdk_openai_agents.guardrails import guardrail_denial
 from agent_engine_sdk_openai_agents.items import to_platform_messages, validate_items
+from agent_engine_sdk_openai_agents.review import without_review_calls
 from agent_engine_sdk_openai_agents.state import (
     decode_active_agent,
     decode_state,
@@ -47,6 +54,7 @@ from agent_engine_sdk_openai_agents.tools import (
     ToolCallFailed,
     TurnContext,
     json_text,
+    turn_scope,
 )
 
 __all__ = ["OpenAIAgentsBaseAgent"]
@@ -137,27 +145,39 @@ class OpenAIAgentsBaseAgent(BaseAgent):
         show_tokens = not resume_ids
         turn = TurnContext()
         while True:
-            result = Runner.run_streamed(
-                starting_agent,
-                run_input,
-                context=turn,
-                run_config=RunConfig(
-                    tracing_disabled=True,
-                    # The agent graph already refuses shared names. Should
-                    # one get past it, the SDK's default would keep one tool
-                    # or handoff and drop the other with only a warning.
-                    tool_name_collision_policy="error",
-                ),
-            )
+            with turn_scope(turn):
+                result = Runner.run_streamed(
+                    starting_agent,
+                    run_input,
+                    context=turn,
+                    run_config=RunConfig(
+                        tracing_disabled=True,
+                        # The agent graph already refuses shared names.
+                        # Should one get past it, the SDK's default would keep
+                        # one tool or handoff and drop the other with only a
+                        # warning.
+                        tool_name_collision_policy="error",
+                    ),
+                )
             committed = False
+            # The agent whose model output the Runner is streaming.
+            speaking = result.current_agent
+            # Whether this pass ended by applying answers for the next one.
+            continues = False
             try:
                 async for event in _turn_events(result, turn):
                     if isinstance(event, StreamEvent):
                         # A nested agent's progress, already in caller form.
                         if show_tokens:
                             yield event
+                    elif event.type == "agent_updated_stream_event":
+                        speaking = event.new_agent
                     elif (
                         show_tokens
+                        # The SDK streams an answer before the agent's output
+                        # guardrails see it. Text they may yet stop reaches
+                        # the caller whole, in the turn's result.
+                        and not speaking.output_guardrails
                         and event.type == "raw_response_event"
                         and isinstance(event.data, ResponseTextDeltaEvent)
                     ):
@@ -186,15 +206,9 @@ class OpenAIAgentsBaseAgent(BaseAgent):
                     )
                 interruptions = list(result.interruptions)
                 if interruptions:
-                    # The batch's pending calls have no output yet, so this is
-                    # not a validated item list; only the call order is read.
-                    raw = cast(list[dict[str, Any]], result.to_input_list())
-                    call_order = [
-                        str(item.get("call_id"))
-                        for item in raw
-                        if item.get("type") == "function_call"
-                    ]
-                    waits = await record_approvals(attempt, interruptions, call_order)
+                    waits = await record_approvals(
+                        attempt, interruptions, turn.calls, turn.reviews
+                    )
                     if isinstance(waits[0], PendingApproval):
                         yield suspend_event(
                             cast(tuple[PendingApproval, ...], waits),
@@ -217,8 +231,9 @@ class OpenAIAgentsBaseAgent(BaseAgent):
                                 item, rejection_message=decision.rejection_message
                             )
                     run_input = state
+                    continues = True
                     continue
-                items = validate_items(result.to_input_list())
+                items = validate_items(without_review_calls(result.to_input_list()))
                 response = json_text(result.final_output)
                 try:
                     await settle_execution(
@@ -252,7 +267,13 @@ class OpenAIAgentsBaseAgent(BaseAgent):
                 # tool work in the background after OE stops waiting for it.
                 if not committed and not result.is_complete:
                     result.cancel()
-                await turn.drain()
+                try:
+                    await turn.drain()
+                finally:
+                    # Also when the wait itself is cancelled. The next pass
+                    # continues the runs this one stopped.
+                    if not continues:
+                        forget_stopped_runs(turn)
 
 
 def _resume_activity_ids(ctx: RequestContext) -> frozenset[str]:
@@ -284,6 +305,11 @@ async def _turn_events(
         except ToolCallFailed as failure:
             # The platform tool path's own exception, carried through the SDK.
             turn.events.put_nowait(_RunFailed(failure.error))
+        except (
+            InputGuardrailTripwireTriggered,
+            OutputGuardrailTripwireTriggered,
+        ) as tripped:
+            turn.events.put_nowait(_RunFailed(guardrail_denial(tripped)))
         except Exception as error:
             turn.events.put_nowait(_RunFailed(error))
         except BaseException as error:

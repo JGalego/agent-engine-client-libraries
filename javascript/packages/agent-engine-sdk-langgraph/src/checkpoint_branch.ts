@@ -3,7 +3,19 @@
 import { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import type { CompiledStateGraph, StateSnapshot } from "@langchain/langgraph";
+import { Overwrite } from "@langchain/langgraph";
+import {
+  emptyCheckpoint,
+  type CheckpointMetadata,
+} from "@langchain/langgraph-checkpoint";
 import { isDeepStrictEqual } from "node:util";
+
+import {
+  CANCELLED_TURN_METADATA_KEY,
+  clearQueuedTasks,
+  terminalizeVersionsSeen,
+} from "./cancelled_turn.js";
+import { PlatformCheckpointer } from "./platform_checkpointer.js";
 
 export interface LangGraphCheckpoint {
   readonly threadId: string;
@@ -150,6 +162,34 @@ export type CheckpointReplayPlan = Array<{
 }>;
 
 /**
+ * Materialize a cancelled-turn marker tip as one synthetic superstep. The
+ * marker checkpoint deliberately carries no checkpoint_writes rows, so
+ * task-derived replay would lose its mutations (the rescued user message and
+ * the stopped stamp). Overwrite replaces the messages channel wholesale with
+ * the tip's authoritative list — the dest replay re-mints message ids, so
+ * id-keyed reducer replacement cannot carry the stamp.
+ */
+function cancelledTipUpdates(
+  snapshot: StateSnapshot,
+  writerNode: string,
+): Array<{ values?: unknown; asNode?: string }> {
+  const values = snapshot.values as Record<string, unknown> | undefined;
+  const messages = values?.["messages"];
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+  return [
+    { values: { messages: new Overwrite([...messages]) }, asNode: writerNode },
+  ];
+}
+
+/** Node a synthetic superstep's writes are attributed to. */
+function replayWriterNode(graph: CompiledStateGraph<unknown, unknown>): string {
+  const names = Object.keys(graph.getGraph().nodes)
+    .filter((node) => !node.startsWith("__"))
+    .sort();
+  return names[0] ?? "__start__";
+}
+
+/**
  * Load a completed root checkpoint, or fail closed.
  *
  * Fork validates this before CreateBranch so a missing or incomplete history
@@ -220,6 +260,14 @@ export async function checkpointReplayPlan(
 
   const supersteps: CheckpointReplayPlan = [];
   for (const snapshot of history.reverse()) {
+    const metadata = snapshot.metadata as Record<string, unknown> | undefined;
+    if (metadata?.[CANCELLED_TURN_METADATA_KEY] === true) {
+      // Lazy: the writer node is only needed for marker tips, and normal
+      // forks must not require the graph's drawable form.
+      const updates = cancelledTipUpdates(snapshot, replayWriterNode(graph));
+      if (updates.length > 0) supersteps.push({ updates });
+      continue;
+    }
     const tuple = await checkpointer.getTuple(snapshot.config);
     const updates = stateUpdates(snapshot, tuple?.pendingWrites ?? []);
     if (updates.length > 0) supersteps.push({ updates });
@@ -228,6 +276,67 @@ export async function checkpointReplayPlan(
     throw new Error("LangGraph branch point has no checkpoint history");
   }
   return supersteps;
+}
+
+/**
+ * Close the copied marker tip's artificially-triggered work. Replaying a
+ * marker tip applies its message state wholesale (no task writes), so nodes
+ * that never ran in the source have no `versions_seen` coverage on the dest
+ * and would read as pending — a follow-up on the fork would resume the
+ * cancelled super-step, and the copy's own source-equality check rejects a
+ * non-terminal tip. The written tip keeps the marker: it is itself an
+ * authoritative-values, writes-less checkpoint and must replay as one when
+ * the fork becomes a fork source.
+ */
+async function terminalizeCopiedMarkerTip(
+  graph: CompiledStateGraph<unknown, unknown>,
+  threadId: string,
+): Promise<void> {
+  const raw = graph.checkpointer;
+  const saver = raw instanceof PlatformCheckpointer ? raw.native : raw;
+  if (saver === undefined || saver === null || typeof saver === "boolean") {
+    return;
+  }
+  const latest = await saver.getTuple({
+    configurable: { thread_id: threadId },
+  });
+  if (latest === undefined) return;
+  const channelVersions = { ...(latest.checkpoint.channel_versions ?? {}) };
+  const versionsSeen: Record<string, Record<string, number | string>> = {};
+  for (const [node, seen] of Object.entries(
+    latest.checkpoint.versions_seen ?? {},
+  )) {
+    versionsSeen[node] = { ...seen };
+  }
+  terminalizeVersionsSeen(
+    versionsSeen,
+    channelVersions,
+    Object.keys(graph.getGraph().nodes),
+  );
+  const checkpoint = emptyCheckpoint();
+  checkpoint.channel_values = clearQueuedTasks({
+    ...(latest.checkpoint.channel_values ?? {}),
+  });
+  checkpoint.channel_versions = channelVersions;
+  checkpoint.versions_seen = versionsSeen;
+  const metadata: CheckpointMetadata & Record<string, unknown> = {
+    source: "loop",
+    step: (latest.metadata?.step ?? -1) + 1,
+    parents: {},
+    [CANCELLED_TURN_METADATA_KEY]: true,
+  };
+  await saver.put(
+    {
+      configurable: {
+        thread_id: threadId,
+        checkpoint_ns: "",
+        checkpoint_id: latest.checkpoint.id,
+      },
+    },
+    checkpoint,
+    metadata,
+    channelVersions,
+  );
 }
 
 /**
@@ -272,7 +381,18 @@ export async function copyCheckpoint(
     { ...targetConfig, configurable },
     supersteps,
   );
-  const copied = await graph.getState(copiedConfig);
+  const selectedMetadata = selected.metadata as
+    | Record<string, unknown>
+    | undefined;
+  const copied =
+    selectedMetadata?.[CANCELLED_TURN_METADATA_KEY] === true
+      ? await (async () => {
+          await terminalizeCopiedMarkerTip(graph, targetThreadId);
+          return graph.getState({
+            configurable: { thread_id: targetThreadId, checkpoint_ns: "" },
+          });
+        })()
+      : await graph.getState(copiedConfig);
   if (
     copied.next.length > 0 ||
     copied.tasks.length > 0 ||

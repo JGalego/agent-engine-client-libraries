@@ -1416,6 +1416,15 @@ export type LLMPodStreamEvent = z.infer<typeof LLMPodStreamEventSchema>;
 
 /** Callback from AER to OE when execution completes or suspends. */
 export const ExecutorCallbackRequestSchema = z.object({
+  /** Originating durable attempt returned by StartAttempt. */
+  attempt_id: z.string().min(1).optional(),
+  /** Fence returned with the originating durable attempt. */
+  attempt_fence: z
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
   /** Execution identifier. */
   execution_id: z.string(),
   /** Status: COMPLETED, SUSPENDED, ERROR. */

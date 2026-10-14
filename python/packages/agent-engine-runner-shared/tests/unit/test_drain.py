@@ -37,6 +37,7 @@ from agent_engine_runner_shared.models import ToolPodExecuteRequest
 from agent_engine_runner_shared.server.aer import AERServer
 from agent_engine_runner_shared.server.drain import (
     DEFAULT_MAX_DEADLINE_MS,
+    DrainReason,
     DrainRegistry,
     DrainRequest,
 )
@@ -94,6 +95,19 @@ async def _wait_for_active(registry: DrainRegistry, execution_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Registry state machine
 # ---------------------------------------------------------------------------
+
+
+async def test_drain_reason_reports_the_applied_reason() -> None:
+    registry = DrainRegistry()
+    registry.begin_work("exec-1")
+    assert registry.drain_reason("exec-1") is None
+    registry.apply(_req(reason="rolling_restart"))
+    assert registry.drain_reason("exec-1") == DrainReason.ROLLING_RESTART
+
+
+async def test_drain_reason_is_none_for_a_never_seen_execution() -> None:
+    registry = DrainRegistry()
+    assert registry.drain_reason("never-seen") is None
 
 
 async def test_unknown_execution_is_delivery_failed() -> None:

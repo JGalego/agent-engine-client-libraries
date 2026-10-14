@@ -43,6 +43,7 @@ class MCPToolBinding:
     description: str
     input_schema: dict[str, Any]
     server_config: RuntimeMCPServerConfig
+    annotations: dict[str, Any] | None = None
 
 
 class MCPToolResult(BaseModel):
@@ -177,6 +178,7 @@ async def discover_mcp_tools_async(config: RuntimeMCPConfig) -> list[MCPToolBind
                     description=tool.description or "",
                     input_schema=dict(tool.inputSchema),
                     server_config=server_config,
+                    annotations=normalize_mcp_tool_annotations(getattr(tool, "annotations", None)),
                 )
             )
 
@@ -397,6 +399,35 @@ def _run_coroutine_sync(
     raise active_loop_error
 
 
+def normalize_mcp_tool_annotations(value: Any) -> dict[str, Any] | None:
+    """Return a JSON-safe copy of MCP ``Tool.annotations``, or ``None``.
+
+    Missing or malformed values stay missing. The SDK must not apply MCP client
+    defaults (``readOnlyHint: false``, ``destructiveHint: true``, …); applications
+    fail closed when hints are absent. Pydantic models are dumped with
+    ``exclude_unset=True`` so SDK field defaults are not invented as server hints.
+    """
+
+    if value is None:
+        return None
+    dumped: Any = value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump(mode="json", exclude_unset=True)
+        except Exception:
+            return None
+    if not isinstance(dumped, dict):
+        return None
+    try:
+        parsed = json.loads(json.dumps(dumped, allow_nan=False))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
 def _ensure_json_safe(field_name: str, value: Any) -> None:
     try:
         json.dumps(value)
@@ -467,6 +498,7 @@ __all__ = [
     "make_mcp_tool_pod_callable",
     "make_sync_mcp_tool_callable",
     "mcp_server_network_hosts",
+    "normalize_mcp_tool_annotations",
     "normalize_mcp_tool_result",
     "resolve_mcp_auth",
     "resolve_mcp_headers",

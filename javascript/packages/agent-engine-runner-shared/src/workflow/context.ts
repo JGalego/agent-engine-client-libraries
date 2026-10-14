@@ -15,6 +15,7 @@ import {
   type OperationPath,
 } from "../generated/workflow/v1/common_pb.js";
 import type { AttemptContext } from "../generated/workflow/v1/runtime_pb.js";
+import { CancelledHistoryState } from "./cancelled_history.js";
 
 /**
  * Mutable holder so detached work created inside the scoped callback cannot
@@ -32,6 +33,7 @@ interface AttemptContextHolder {
   observed: ObservedActivityPositions;
   interrupted: InterruptedActivities;
   reconstruction: ActivityReconstruction;
+  cancelledHistory: CancelledHistoryState;
   guardrailReviewWaits: GuardrailReviewWaits;
 }
 
@@ -376,6 +378,7 @@ function bindHolder(attempt: AttemptContext): AttemptContextHolder {
     observed: new ObservedActivityPositions(),
     interrupted: new InterruptedActivities(),
     reconstruction: new ActivityReconstruction(),
+    cancelledHistory: new CancelledHistoryState(),
     guardrailReviewWaits: new GuardrailReviewWaits(),
   };
 }
@@ -403,6 +406,7 @@ export function runWithAttemptContext<T>(
 ): T {
   const holder = bindHolder(attempt);
   const close = (): void => {
+    holder.cancelledHistory.close();
     holder.attempt = null;
   };
   try {
@@ -420,6 +424,16 @@ export function runWithAttemptContext<T>(
 
 export function currentAttemptContext(): AttemptContext | null {
   return storage.getStore()?.attempt ?? null;
+}
+
+/** @internal Executor adapter capture scope. */
+export function currentCancelledHistory(): CancelledHistoryState | null {
+  return activeHolder()?.cancelledHistory ?? null;
+}
+
+/** @internal Executor lifecycle callback before adapter scratch cleanup. */
+export async function reportCancelledHistoryBeforeCleanup(): Promise<void> {
+  await currentCancelledHistory()?.reportBeforeCleanup();
 }
 
 export function currentStepOrdinal(): number {

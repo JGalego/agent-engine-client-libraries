@@ -98,9 +98,11 @@ class FinalizeStepCommand(_message.Message):
     def __init__(self, workflow_identity: _Optional[_Union[_common_pb2.WorkflowIdentity, _Mapping]] = ..., attempt_id: _Optional[str] = ..., fencing_token: _Optional[int] = ..., state: _Optional[_Union[StateSnapshot, _Mapping]] = ..., step_ordinal: _Optional[int] = ..., observed_activity_positions: _Optional[_Iterable[_Union[_common_pb2.ActivityPosition, _Mapping]]] = ..., suspensions: _Optional[_Iterable[_Union[_activity_pb2.StepSuspensionEntry, _Mapping]]] = ...) -> None: ...
 
 class FinalizeStepResponse(_message.Message):
-    __slots__ = ("entries", "error")
+    __slots__ = ("entries", "error", "source_state_hash")
     ENTRIES_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_STATE_HASH_FIELD_NUMBER: _ClassVar[int]
     entries: _containers.RepeatedCompositeFieldContainer[_activity_pb2.StepActivityEntry]
     error: _common_pb2.WorkflowError
-    def __init__(self, entries: _Optional[_Iterable[_Union[_activity_pb2.StepActivityEntry, _Mapping]]] = ..., error: _Optional[_Union[_common_pb2.WorkflowError, _Mapping]] = ...) -> None: ...
+    source_state_hash: str
+    def __init__(self, entries: _Optional[_Iterable[_Union[_activity_pb2.StepActivityEntry, _Mapping]]] = ..., error: _Optional[_Union[_common_pb2.WorkflowError, _Mapping]] = ..., source_state_hash: _Optional[str] = ...) -> None: ...

@@ -29,12 +29,19 @@ class _CallbackKey(NamedTuple):
     execution_id: str
     kind: str
     suspend_generation: Optional[int] = None
+    attempt_id: Optional[str] = None
+    attempt_fence: Optional[int] = None
 
 
 def _callback_key(callback_body: dict[str, Any]) -> Optional[_CallbackKey]:
     execution_id = str(callback_body["execution_id"])
     if callback_body.get("status") != "SUSPENDED":
-        return _CallbackKey(execution_id, "terminal")
+        return _CallbackKey(
+            execution_id,
+            "terminal",
+            attempt_id=callback_body.get("attempt_id"),
+            attempt_fence=callback_body.get("attempt_fence"),
+        )
 
     suspend_generation = callback_body.get("suspend_generation")
     if suspend_generation is None:
@@ -135,9 +142,17 @@ class CallbackDelivery:
         self._tasks.clear()
         self._pending.clear()
 
-    async def wait_for_terminal(self, execution_id: str) -> bool:
+    async def wait_for_terminal(
+        self,
+        execution_id: str,
+        *,
+        attempt_id: Optional[str] = None,
+        attempt_fence: Optional[int] = None,
+    ) -> bool:
         """Wait for retained terminal delivery before session release."""
-        callback_key = _CallbackKey(execution_id, "terminal")
+        callback_key = _CallbackKey(
+            execution_id, "terminal", attempt_id=attempt_id, attempt_fence=attempt_fence
+        )
         task = self._tasks.get(callback_key)
         if task is not None:
             try:

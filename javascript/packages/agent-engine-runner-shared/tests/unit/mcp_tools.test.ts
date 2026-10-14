@@ -20,6 +20,7 @@ import {
   isConfiguredMcpSdkToolName,
   makeMcpSdkToolName,
   mcpServerNetworkHosts,
+  normalizeMcpToolAnnotations,
   normalizeMcpToolResult,
   resolveConfiguredMcpToolBinding,
   resolveMcpHeaders,
@@ -384,6 +385,138 @@ describe("discoverMcpTools — pagination and caps", () => {
         message: expect.stringContaining("tools/list"),
       },
     );
+  });
+});
+
+describe("normalizeMcpToolAnnotations", () => {
+  test("returns a JSON-safe copy of a plain annotations object", () => {
+    const annotations = {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+      title: "Search",
+    };
+    expect(normalizeMcpToolAnnotations(annotations)).toEqual(annotations);
+  });
+
+  test("omits missing, null, and malformed values instead of inventing defaults", () => {
+    expect(normalizeMcpToolAnnotations(undefined)).toBeUndefined();
+    expect(normalizeMcpToolAnnotations(null)).toBeUndefined();
+    expect(normalizeMcpToolAnnotations("read-only")).toBeUndefined();
+    expect(normalizeMcpToolAnnotations(["readOnlyHint"])).toBeUndefined();
+    expect(normalizeMcpToolAnnotations(true)).toBeUndefined();
+  });
+
+  test("omits non-JSON-serializable objects rather than failing discovery", () => {
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    expect(normalizeMcpToolAnnotations(circular)).toBeUndefined();
+  });
+});
+
+describe("discoverMcpTools — annotations", () => {
+  test("preserves standard hints and extra keys from tools/list", async () => {
+    mockListTools.mockResolvedValueOnce({
+      tools: [
+        {
+          name: "search_issues",
+          description: "Search issues",
+          inputSchema: { type: "object" },
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+            title: "Search issues",
+          },
+        },
+        {
+          name: "create_issue",
+          inputSchema: { type: "object" },
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+          },
+        },
+        {
+          name: "delete_issue",
+          inputSchema: { type: "object" },
+          annotations: {
+            readOnlyHint: false,
+            destructiveHint: true,
+          },
+        },
+        {
+          name: "unannotated",
+          inputSchema: { type: "object" },
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const bindings = await discoverMcpTools(makeDiscoveryConfig());
+    const byName = Object.fromEntries(bindings.map((b) => [b.toolName, b]));
+
+    expect(byName["search_issues"]?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+      title: "Search issues",
+    });
+    expect(byName["create_issue"]?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
+    expect(byName["delete_issue"]?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(byName["unannotated"]?.annotations).toBeUndefined();
+  });
+
+  test("omits malformed annotations and still discovers the tool", async () => {
+    mockListTools.mockResolvedValueOnce({
+      tools: [
+        {
+          name: "weird",
+          inputSchema: { type: "object" },
+          annotations: "not-an-object",
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const bindings = await discoverMcpTools(makeDiscoveryConfig());
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]?.toolName).toBe("weird");
+    expect(bindings[0]?.annotations).toBeUndefined();
+  });
+
+  test("keeps annotations on tools that survive allowed_tools filtering", async () => {
+    mockListTools.mockResolvedValueOnce({
+      tools: [
+        {
+          name: "search_issues",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+        },
+        {
+          name: "create_issue",
+          inputSchema: { type: "object" },
+          annotations: { destructiveHint: false },
+        },
+      ],
+      nextCursor: undefined,
+    });
+
+    const bindings = await discoverMcpTools(
+      makeDiscoveryConfig({ allowed_tools: ["search_issues"] }),
+    );
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]?.toolName).toBe("search_issues");
+    expect(bindings[0]?.annotations).toEqual({ readOnlyHint: true });
   });
 });
 

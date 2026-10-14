@@ -285,7 +285,10 @@ export class LangGraphQueryPlugin {
     }
 
     const summarySessionIds = [...aggregateDocBySessionId.keys()];
-    const [previewBySessionId, messageCountBySessionId] = await Promise.all([
+    const [
+      previewBySessionId,
+      { counts: messageCountBySessionId, previews: previewFallbacks },
+    ] = await Promise.all([
       this.collectPreviews(summarySessionIds),
       this.collectMessageCounts(summarySessionIds),
     ]);
@@ -296,7 +299,14 @@ export class LangGraphQueryPlugin {
         last_activity: isoOrEmpty(aggregateDoc["latest_ts"]),
         created_at: isoOrEmpty(aggregateDoc["first_ts"]),
         message_count: messageCountBySessionId.get(sessionId) ?? 0,
-        first_message_preview: previewBySessionId.get(sessionId) ?? "",
+        // The writes-derived preview misses sessions whose first human
+        // message only exists in a cancelled-turn checkpoint's channel values
+        // (no checkpoint_writes rows by design); the authoritative list
+        // already loaded for the count carries it.
+        first_message_preview:
+          previewBySessionId.get(sessionId) ||
+          previewFallbacks.get(sessionId) ||
+          "",
       }),
     );
   }
@@ -313,8 +323,13 @@ export class LangGraphQueryPlugin {
    */
   private async collectMessageCounts(
     sessionIds: string[],
-  ): Promise<Map<string, number>> {
+  ): Promise<{ counts: Map<string, number>; previews: Map<string, string> }> {
     const counts = new Map<string, number>();
+    // Fallback previews for sessions whose first human message never produced
+    // a checkpoint_writes row — a cancelled turn's rescued message lives only
+    // in the synthetic tip's channel values, which the writes-derived preview
+    // pipeline never sees.
+    const previews = new Map<string, string>();
     for (
       let offset = 0;
       offset < sessionIds.length;
@@ -330,6 +345,10 @@ export class LangGraphQueryPlugin {
             const authoritative =
               await this.loadAuthoritativeMessages(sessionId);
             counts.set(sessionId, authoritative?.messages.length ?? 0);
+            const preview = firstHumanMessagePreview(
+              authoritative?.messages ?? [],
+            );
+            if (preview !== "") previews.set(sessionId, preview);
           } catch (exc) {
             logger.warn(
               { sessionId, error: String(exc) },
@@ -340,7 +359,7 @@ export class LangGraphQueryPlugin {
         }),
       );
     }
-    return counts;
+    return { counts, previews };
   }
 
   private async collectPreviews(
@@ -676,6 +695,15 @@ function humanContent(decodedMessage: unknown): string {
   return messageText(decodedMessage);
 }
 
+/** First non-empty human message content, truncated to preview length. */
+function firstHumanMessagePreview(messages: unknown[]): string {
+  for (const message of messages) {
+    const content = humanContent(message);
+    if (content !== "") return content.slice(0, PREVIEW_MAX_CHARS);
+  }
+  return "";
+}
+
 function toSessionMessage(args: {
   message: unknown;
   sessionId: string;
@@ -697,6 +725,7 @@ function toSessionMessage(args: {
     typeof candidate.id === "string" && candidate.id !== ""
       ? candidate.id
       : `msg-${args.sessionId}-${args.messageIndex}`;
+  const kwargs = jsonSafeMetadata(candidate.additional_kwargs);
   return {
     id: messageId,
     role,
@@ -706,7 +735,7 @@ function toSessionMessage(args: {
     name,
     tool_calls: toolCalls(args.message),
     tool_call_id: toolCallId(args.message),
-    additional_kwargs: jsonSafeMetadata(candidate.additional_kwargs),
+    additional_kwargs: kwargs,
   };
 }
 

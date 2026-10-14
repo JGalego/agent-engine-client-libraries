@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterator, Mapping
 
 from agent_engine_runner_shared.connectors.bundle import BundledTool, ConnectorBundle
 from agent_engine_runner_shared.connectors.executor import ConnectorExecutor
+from agent_engine_runner_shared.context import get_current_authorization
 
 __all__ = ["ConnectorToolRegistration", "ConnectorToolRuntime"]
 
@@ -68,11 +69,16 @@ class ConnectorToolRuntime:
 
     @staticmethod
     def _make_callable(executor: ConnectorExecutor, tool_name: str) -> Callable[..., str]:
+        """Bind a tool name; capture credentials only when its invocation runs."""
+
         def execute(**arguments: Any) -> str:
+            """Execute with this worker's captured environment and delegated authorization."""
             env = _current_connector_env.get()
             if env is None:
                 raise RuntimeError("connector invocation environment is unavailable")
-            return executor.execute(tool_name, arguments, env=env)
+            return executor.execute(
+                tool_name, arguments, env=env, authorization=get_current_authorization()
+            )
 
         execute.__name__ = tool_name
         return execute
