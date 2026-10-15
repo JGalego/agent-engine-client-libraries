@@ -1,0 +1,17 @@
+# Settings for the managed platform, merged into the packaged agent.yaml by
+# scripts/package-java-agent.sh.
+version: 0.1.0
+sandboxes:
+  agent:
+    secrets: ["*"]
+    tools: []
+  tool:
+    secrets: ["*"]
+    tools:
+      - semantic_search
+      - filter_metadata
+      - correlate_evidence
+network:
+  egress:
+    - fqdn: api.openai.com
+      ports: [443]

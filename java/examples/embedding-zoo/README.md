@@ -195,5 +195,25 @@ To use the stack's own Atlas Local, ingest from the host through its mapped port
 `mongodb://mongodb:27017/?directConnection=true`, since `localhost` inside the container is the
 container itself.
 
+## Managed platform
+
+The packaging script in [`java/README.md`](../../README.md#deploy-to-the-managed-platform) wraps the
+agent for the managed platform. This example's `platform.yaml` lists the three tools and allows
+egress to `api.openai.com`; the model files ship in the package.
+
+```bash
+mvn package -DskipTests -pl examples/embedding-zoo -am        # from java/
+../scripts/package-java-agent.sh examples/embedding-zoo \
+  --include examples/embedding-zoo/data/models/minilm:data/models/minilm
+cd examples/embedding-zoo/target/platform
+agentengine init
+agentengine atlas setup                                     # creates a billed Atlas cluster
+agentengine secret set OPENAI_API_KEY
+```
+
+The tool sandbox searches the cluster `atlas setup` creates, so ingest into that cluster from your
+machine first: allow your IP in Atlas, set `MONGODB_URI` to the URI `atlas setup` printed, and run
+`ingest`. Then `agentengine deploy --auto` and `agentengine invoke "..."`.
+
 The CLI demo keeps its in-memory store for that one process. Set `MONGODB_URI` before `ingest`
 when the agent tool server should search the same records.
