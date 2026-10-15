@@ -1,0 +1,3 @@
+name: hello-java
+entrypoint: com.example.hello.HelloApp:app
+framework: none

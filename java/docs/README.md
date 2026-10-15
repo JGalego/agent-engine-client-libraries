@@ -11,6 +11,11 @@ source with `mvn javadoc:javadoc`; this page indexes it alongside the package gu
 
 - [README](../packages/agent-engine-sdk-langchain4j/README.md)
 
+## Runner — `agent-engine-runner-shared`
+
+- [README](../packages/agent-engine-runner-shared/README.md)
+- Example: [hello-agent](../examples/hello-agent/README.md)
+
 ## Core SDK — `agent-engine-sdk`
 
 - [README](../packages/agent-engine-sdk/README.md)

@@ -29,6 +29,8 @@
     <module>packages/agent-engine-sdk</module>
     <module>packages/agent-engine-sdk-memory</module>
     <module>packages/agent-engine-sdk-langchain4j</module>
+    <module>packages/agent-engine-runner-shared</module>
+    <module>examples/hello-agent</module>
   </modules>
 
   <properties>
@@ -64,6 +66,11 @@
         <groupId>dev.langchain4j</groupId>
         <artifactId>langchain4j-open-ai</artifactId>
         <version>${langchain4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.mongodb.agentengine</groupId>
+        <artifactId>agent-engine-runner-shared</artifactId>
+        <version>${project.version}</version>
       </dependency>
       <dependency>
         <groupId>com.mongodb.agentengine</groupId>
