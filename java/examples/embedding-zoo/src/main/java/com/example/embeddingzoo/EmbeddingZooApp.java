@@ -18,6 +18,10 @@ public final class EmbeddingZooApp {
 
   static final String MODEL = System.getenv().getOrDefault("OPENAI_MODEL", "gpt-4o-mini");
 
+  private static final List<String> MODALITIES = List.of("telemetry", "image", "log", "incident", "code");
+  private static final List<String> DATASET_IDS =
+      List.of(Datasets.IMS_ID, Datasets.MVTEC_ID, Datasets.LOG_ID, Datasets.INCIDENT_ID, Datasets.CODE_ID);
+
   public static final RunnableApp app = create();
 
   private EmbeddingZooApp() {}
@@ -36,8 +40,8 @@ public final class EmbeddingZooApp {
                 "query", Map.of("type", "string", "description", "Natural-language query. Used in the text space."),
                 "like", Map.of("type", "string", "description", "Id of a stored record whose vector is the query."),
                 "space", Map.of("type", "string", "enum", List.of("text", "vibration", "image")),
-                "modality", Map.of("type", "string"),
-                "dataset_id", Map.of("type", "string"),
+                "modality", Map.of("type", "string", "enum", MODALITIES),
+                "dataset_id", Map.of("type", "string", "enum", DATASET_IDS),
                 "limit", Map.of("type", "integer")),
             "required", List.of()),
         180));
@@ -47,8 +51,8 @@ public final class EmbeddingZooApp {
         Map.of(
             "type", "object",
             "properties", Map.of(
-                "modality", Map.of("type", "string"),
-                "dataset_id", Map.of("type", "string"),
+                "modality", Map.of("type", "string", "enum", MODALITIES),
+                "dataset_id", Map.of("type", "string", "enum", DATASET_IDS),
                 "metadata", Map.of("type", "object"),
                 "limit", Map.of("type", "integer")),
             "required", List.of()),

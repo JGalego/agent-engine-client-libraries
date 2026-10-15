@@ -60,6 +60,17 @@ class ZooToolkitTest {
     assertTrue(EmbeddingZooAgent.SYSTEM_PROMPT.contains("verified_connection"));
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  void filterArgumentsAreLimitedToTheStoredValues() {
+    for (String tool : List.of("semantic_search", "filter_metadata")) {
+      Map<String, Object> properties =
+          (Map<String, Object>) EmbeddingZooApp.app.findTool(tool).orElseThrow().argsSchema().get("properties");
+      assertTrue(((Map<String, Object>) properties.get("modality")).get("enum").toString().contains("telemetry"));
+      assertTrue(((Map<String, Object>) properties.get("dataset_id")).get("enum").toString().contains("nasa-ims-bearings"));
+    }
+  }
+
   private static StoredRecord card(String id, String modality, String dataset, String text) {
     return StoredRecord.builder()
         .id(id)
