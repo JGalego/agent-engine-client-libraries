@@ -9,9 +9,10 @@ Use `agent-engine-sdk-memory` if your application reads or writes project memory
 | Package | Description |
 |---|---|
 | [`agent-engine-sdk-memory`](packages/agent-engine-sdk-memory) | Project memory (semantic, episodic, taxonomic, procedural and custom types) |
+| [`agent-engine-sdk-langchain4j`](packages/agent-engine-sdk-langchain4j) | LangChain4j adapters (chat model as `BaseLLM`, message and tool translation) |
 | [`agent-engine-sdk`](packages/agent-engine-sdk) | Framework-neutral core protocols, models, and HTTP clients |
 
-Framework SDKs (LangGraph, Google ADK) and the shared runner are not available for Java.
+The LangGraph4j agent SDK and the shared runner are not available for Java yet.
 
 ## Install
 
