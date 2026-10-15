@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -87,6 +88,28 @@ class MemoryLiveTest {
     }
   }
 
+  /**
+   * Retries a call the embedding service throttled. A key with a low requests-per-minute limit
+   * (such as a free Voyage tier) rejects bursts, and every embedding-backed call can hit it.
+   */
+  private static <T> T unthrottled(Supplier<T> call) {
+    for (int attempt = 1; ; attempt++) {
+      try {
+        return call.get();
+      } catch (MemoryBadRequestException e) {
+        if (attempt >= 4 || e.getMessage() == null || !e.getMessage().contains("rate limit")) {
+          throw e;
+        }
+        try {
+          Thread.sleep(21_000);
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          throw e;
+        }
+      }
+    }
+  }
+
   private Memory memory() {
     if (token == null) {
       return Memory.builder().build();
@@ -99,11 +122,11 @@ class MemoryLiveTest {
     try (Memory memory = memory()) {
       String label = "favorite_color_" + UUID.randomUUID().toString().substring(0, 8);
 
-      var saved = memory.saveSemantic(CreateSemanticRequest.builder(label, "the user's favorite color is teal").userId(user).build());
+      var saved = unthrottled(() -> memory.saveSemantic(CreateSemanticRequest.builder(label, "the user's favorite color is teal").userId(user).build()));
       System.out.println("saveSemantic -> " + saved);
       JsonNode found = memory.getSemantic(GetSemanticRequest.builder().label(label).userId(user).build()).orElse(null);
       System.out.println("getSemantic -> " + found);
-      var hits = memory.searchSemantic(SearchSemanticRequest.builder("what color does the user like").userId(user).build());
+      var hits = unthrottled(() -> memory.searchSemantic(SearchSemanticRequest.builder("what color does the user like").userId(user).build()));
       System.out.println("searchSemantic -> " + hits);
 
       assertEquals(label, saved.label());
@@ -114,11 +137,13 @@ class MemoryLiveTest {
   @Test
   void conversationLoop() throws Exception {
     try (Memory memory = memory().bind(MemoryRequestContext.of(user, "session-" + UUID.randomUUID()))) {
-      var turn = memory.recordTurn(WriteTurnRequest.builder("user").content("I am allergic to penicillin.").build());
+      var turn = unthrottled(() -> memory.recordTurn(WriteTurnRequest.builder("user").content("I am allergic to penicillin.").build()));
       System.out.println("recordTurn -> " + turn);
       var context =
-          memory.buildContext(
-              BuildContextRequest.builder("What medications should I avoid?").enabledSources(Set.of(MemorySource.STM, MemorySource.SEMANTIC)).build());
+          unthrottled(
+              () ->
+                  memory.buildContext(
+                      BuildContextRequest.builder("What medications should I avoid?").enabledSources(Set.of(MemorySource.STM, MemorySource.SEMANTIC)).build()));
       System.out.println("buildContext -> " + context);
 
       assertFalse(turn.id().isBlank());
@@ -129,7 +154,7 @@ class MemoryLiveTest {
   @Test
   void episodes() throws Exception {
     try (Memory memory = memory().bind(MemoryRequestContext.of(user, "session-" + UUID.randomUUID()))) {
-      var saved = memory.saveEpisode(CreateEpisodicRequest.builder("Onboarding chat", "User asked about billing.").summaryText("Billing question").build());
+      var saved = unthrottled(() -> memory.saveEpisode(CreateEpisodicRequest.builder("Onboarding chat", "User asked about billing.").summaryText("Billing question").build()));
       System.out.println("saveEpisode -> " + saved);
       System.out.println("listEpisodes -> " + memory.listEpisodes(ListEpisodicRequest.builder().build()));
 
