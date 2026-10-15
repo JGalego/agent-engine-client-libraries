@@ -209,8 +209,8 @@ cd java
 mvn package -DskipTests -pl examples/embedding-zoo -am
 M=examples/embedding-zoo/data/models/minilm
 ../scripts/package-java-agent.sh examples/embedding-zoo \
-  --include $M/vocab.txt:data/models/minilm/vocab.txt \
-  --include $M/model_quantized.onnx:data/models/minilm/model_quantized.onnx \
+  --include $M/vocab.txt:java/data/models/minilm/vocab.txt \
+  --include $M/model_quantized.onnx:java/data/models/minilm/model_quantized.onnx \
   --prune 'onnxruntime-*.jar:ai/onnxruntime/native/win-*,ai/onnxruntime/native/osx-*,ai/onnxruntime/native/linux-aarch64/*'
 cd examples/embedding-zoo/target/platform
 agentengine init
