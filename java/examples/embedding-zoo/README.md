@@ -230,6 +230,15 @@ export MONGODB_URI='<the URI atlas setup printed>' EMBEDDING_ZOO_TEXT_PROVIDER=m
 mvn -pl examples/embedding-zoo compile exec:java -Dexec.args=ingest
 ```
 
+The `jdk4py` runtime the platform package uses has only 36 modules, and `jdk.naming.dns` is not one
+of them, so the MongoDB driver cannot resolve `mongodb+srv://` URIs there. Give the sandbox the
+cluster's standard URI instead (`atlas api flexClusters getFlexCluster ...` shows it under
+`connectionStrings.standard`), with the database user's name and password added, as the
+`MONGODB_URI` secret. Ingest from your machine can keep using the `+srv` form.
+
+Also set `JAVA_OPTS=-Djava.net.preferIPv6Addresses=true`: the platform's sandboxes have only an IPv6
+route, and the JDK tries IPv4 first.
+
 Then `agentengine deploy --auto` and `agentengine invoke "..."`.
 
 The CLI demo keeps its in-memory store for that one process. Set `MONGODB_URI` before `ingest`
