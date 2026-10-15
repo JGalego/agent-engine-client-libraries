@@ -213,7 +213,14 @@ agentengine secret set OPENAI_API_KEY
 
 The tool sandbox searches the cluster `atlas setup` creates, so ingest into that cluster from your
 machine first: allow your IP in Atlas, set `MONGODB_URI` to the URI `atlas setup` printed, and run
-`ingest`. Then `agentengine deploy --auto` and `agentengine invoke "..."`.
+`ingest` from `java/` (with the `MAVEN_OPTS` from the CLI demo section, or the JIT crash can hit):
+
+```bash
+export MAVEN_OPTS="-Xmx4g -XX:-UseSuperWord"
+mvn -pl examples/embedding-zoo compile exec:java -Dexec.args=ingest
+```
+
+Then `agentengine deploy --auto` and `agentengine invoke "..."`.
 
 The CLI demo keeps its in-memory store for that one process. Set `MONGODB_URI` before `ingest`
 when the agent tool server should search the same records.
