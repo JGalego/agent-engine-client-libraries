@@ -55,7 +55,7 @@ public final class AerServer extends ComponentServer {
     this.config = config;
     this.features = features;
     this.framework = framework == null ? "" : framework;
-    this.oe = new OeClient(config.oeUrl(), OE_TIMEOUT);
+    this.oe = OeClient.fromEnvironment(config.oeUrl(), OE_TIMEOUT, System.getenv());
     http().route("POST", "/execute", request -> JsonHttpServer.Reply.ok(execute(request.json(ExecuteRequest.class))));
     http().route("POST", "/warm-up", request -> JsonHttpServer.Reply.noContent());
     http().route("GET", "/query/sessions", request -> JsonHttpServer.Reply.ok(querySummaries(request.queryValues("session_ids"))));

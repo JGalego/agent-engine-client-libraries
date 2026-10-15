@@ -16,6 +16,7 @@ This package is a work in progress. It currently covers:
 | Launcher: `agent.yaml`, entrypoint loading, `RUNNER_MODE` / `AGENTIC_DEV_MODES` | done |
 | Agent runtime (port 8001): `/health`, `/`, `/tools`, `/execute`, `/warm-up` | done |
 | Capability advertisement to the OE at startup | done |
+| Mutual TLS to the OE (`TLS_*` variables, as in the managed platform) | done |
 | Completion and error callbacks to the OE | done |
 | Tool calls through the OE: local tools (`/tool/execute`, `/tool/result`) and remote tools (the OE runs them on the tool server) | done |
 | LLM calls through the OE, streamed from the tool server and folded into a response | done |
@@ -93,6 +94,7 @@ The platform stamps these on every runner container.
 | `AGENTIC_DEV_MODES` | Comma-separated modes to host in one process. Default `aer,tool`. |
 | `APP_PORT`, `APP_HOST` | Port (single mode only) and interface. Defaults: 8001 / 8002 and `0.0.0.0`. |
 | `OE_URL` | The OE. Callbacks always go here, never to a URL a request names. |
+| `TLS_CERT`, `TLS_KEY`, `TLS_CA_CERT` | Mutual TLS to an `https://` OE, each as `_PATH` (a file) or `_PEM` (the PEM text). All three are required for https; the CA is the only one trusted. |
 | `APP_ID`, `ORG_ID`, `PROJECT_ID` | Identity sent when advertising capabilities. |
 | `AGENT_CONFIG` | Path of `agent.yaml`. Default `agent.yaml`. |
 

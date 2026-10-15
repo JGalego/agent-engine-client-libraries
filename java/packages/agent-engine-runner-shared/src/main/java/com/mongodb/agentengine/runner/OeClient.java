@@ -11,7 +11,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Set;
+import javax.net.ssl.SSLContext;
 
 /** The runner's HTTP client for the orchestration engine. */
 public class OeClient {
@@ -44,11 +46,31 @@ public class OeClient {
   private final HttpClient http;
 
   public OeClient(String baseUrl, Duration timeout) {
+    this(baseUrl, timeout, null);
+  }
+
+  /**
+   * @param tls the mutual-TLS context for an https OE, or null for the JVM's default
+   */
+  public OeClient(String baseUrl, Duration timeout, SSLContext tls) {
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     this.timeout = timeout;
     // HTTP/1.1 only: on plain http:// the JDK client otherwise attempts an h2c upgrade, and ASGI
     // servers drop the request body.
-    this.http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(timeout).build();
+    HttpClient.Builder builder = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(timeout);
+    if (tls != null) {
+      builder.sslContext(tls);
+    }
+    this.http = builder.build();
+  }
+
+  /**
+   * A client for the OE named by {@code OE_URL}. An https URL needs the platform's TLS material in
+   * {@code env}; see {@link PlatformTls}.
+   */
+  public static OeClient fromEnvironment(String baseUrl, Duration timeout, Map<String, String> env) {
+    boolean https = baseUrl.regionMatches(true, 0, "https://", 0, "https://".length());
+    return new OeClient(baseUrl, timeout, https ? PlatformTls.fromEnvironment(env) : null);
   }
 
   /**
