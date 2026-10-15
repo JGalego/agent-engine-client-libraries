@@ -210,4 +210,81 @@ class ModelsTest {
     assertEquals("", summary.firstMessagePreview());
     assertEquals(3, summary.messageCount());
   }
+
+  // --- folding streamed chunks ---------------------------------------------------------------
+
+  private static LLMStreamChunk text(String content) {
+    return new LLMStreamChunk(content, null, null, null, null, null, null);
+  }
+
+  private static LLMStreamChunk calls(ToolCallChunk... chunks) {
+    return new LLMStreamChunk(null, List.of(chunks), null, null, null, null, null);
+  }
+
+  @Test
+  void foldsTextUsageAndMetadataFromChunks() throws Exception {
+    LLMResponse response =
+        LLMResponse.fromChunks(
+            List.of(
+                text("Hel"),
+                text("lo"),
+                new LLMStreamChunk(null, null, null, "msg_1", "bot", Map.of("k", tree("\"x\"")), Map.of("a", tree("1"))),
+                new LLMStreamChunk(null, null, new LLMTokenUsage(2, 3, null, null, null, null, "m"), null, null, null, Map.of("a", tree("2")))));
+
+    assertEquals("Hello", response.content());
+    assertEquals("msg_1", response.id());
+    assertEquals("bot", response.name());
+    assertEquals(5, response.usage().totalTokens());
+    assertEquals(tree("2"), response.responseMetadata().get("a"));
+    assertEquals(tree("\"x\""), response.additionalKwargs().get("k"));
+    assertEquals(tree("5"), response.metadata().get("total_tokens"));
+    assertNull(response.toolCalls());
+  }
+
+  @Test
+  void foldsToolCallFragmentsByIndex() throws Exception {
+    LLMResponse response =
+        LLMResponse.fromChunks(
+            List.of(
+                calls(new ToolCallChunk("c1", "lookup", "{\"q\":", null, 0)),
+                calls(new ToolCallChunk(null, null, "\"x\"}", null, 0)),
+                calls(new ToolCallChunk("c2", "other", "{}", "tool_call", 1))));
+
+    assertEquals(2, response.toolCalls().size());
+    assertEquals("c1", response.toolCalls().get(0).id());
+    assertEquals("lookup", response.toolCalls().get(0).name());
+    assertEquals(tree("{\"q\":\"x\"}"), response.toolCalls().get(0).args());
+    assertEquals("tool_call", response.toolCalls().get(1).type());
+  }
+
+  @Test
+  void foldsFragmentsWithoutIndexesByIdThenByPosition() throws Exception {
+    LLMResponse response =
+        LLMResponse.fromChunks(
+            List.of(
+                calls(new ToolCallChunk("a", "first", "{\"n\":", null, null)),
+                calls(new ToolCallChunk(null, null, "1}", null, null)),
+                calls(new ToolCallChunk("b", "second", "{}", null, null)),
+                calls(new ToolCallChunk("a", null, null, null, null))));
+
+    assertEquals(2, response.toolCalls().size());
+    assertEquals(tree("{\"n\":1}"), response.toolCalls().get(0).args());
+    assertEquals("second", response.toolCalls().get(1).name());
+  }
+
+  @Test
+  void keepsUnparseableArgumentsAsText() {
+    LLMResponse response = LLMResponse.fromChunks(List.of(calls(new ToolCallChunk("c", "t", "{broken", null, 0))));
+
+    assertEquals("{broken", response.toolCalls().get(0).args().asText());
+  }
+
+  @Test
+  void anEmptyStreamFoldsToAnEmptyResponse() {
+    LLMResponse response = LLMResponse.fromChunks(List.of());
+
+    assertEquals("", response.content());
+    assertNull(response.usage());
+    assertNull(response.toolCalls());
+  }
 }

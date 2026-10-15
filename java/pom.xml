@@ -31,6 +31,7 @@
     <module>packages/agent-engine-sdk-langchain4j</module>
     <module>packages/agent-engine-runner-shared</module>
     <module>examples/hello-agent</module>
+    <module>examples/assistant-agent</module>
   </modules>
 
   <properties>

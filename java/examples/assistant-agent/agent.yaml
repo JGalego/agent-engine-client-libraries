@@ -1,0 +1,3 @@
+name: assistant-java
+entrypoint: com.example.assistant.AssistantApp:app
+framework: langchain4j

@@ -14,7 +14,8 @@ Use `agent-engine-sdk-memory` if your application reads or writes project memory
 | [`agent-engine-runner-shared`](packages/agent-engine-runner-shared) | Runner runtime that serves agents to the Orchestration Engine (in progress) |
 
 The LangGraph4j agent SDK is not available for Java yet. See the
-[`hello-agent`](examples/hello-agent) example for running a Java agent in the local stack.
+[`hello-agent`](examples/hello-agent) and [`assistant-agent`](examples/assistant-agent) examples for
+running a Java agent in the local stack.
 
 ## Install
 

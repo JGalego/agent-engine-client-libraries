@@ -46,8 +46,27 @@ public final class JsonHttpServer implements AutoCloseable {
     }
   }
 
+  /** Writes server-sent events to the client as they are produced. */
+  public interface EventSink {
+
+    /** Sends one event whose data is {@code payload} serialized as JSON. */
+    void send(Object payload) throws IOException;
+  }
+
+  /** The body of a streamed response. */
+  @FunctionalInterface
+  public interface EventStream {
+    void write(EventSink sink) throws Exception;
+  }
+
   /** The result of a handler. */
   public record Reply(int status, Object body) {
+
+    /** A {@code text/event-stream} response produced by {@code stream}. */
+    public static Reply events(EventStream stream) {
+      return new Reply(200, stream);
+    }
+
 
     public static Reply ok(Object body) {
       return new Reply(200, body);
@@ -130,7 +149,32 @@ public final class JsonHttpServer implements AutoCloseable {
       status = 500;
       body = Map.of("detail", "Internal Server Error");
     }
-    write(exchange, status, body);
+    if (body instanceof EventStream stream) {
+      writeEvents(exchange, stream);
+    } else {
+      write(exchange, status, body);
+    }
+  }
+
+  private static void writeEvents(HttpExchange exchange, EventStream stream) throws IOException {
+    exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+    exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+    exchange.sendResponseHeaders(200, 0);
+    try (OutputStream out = exchange.getResponseBody()) {
+      EventSink sink =
+          payload -> {
+            out.write(("data: " + Json.mapper().writeValueAsString(payload) + "\n\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+          };
+      try {
+        stream.write(sink);
+      } catch (IOException e) {
+        throw e; // the client went away; there is nobody to tell
+      } catch (Exception e) {
+        LOG.log(System.Logger.Level.ERROR, "Event stream failed", e);
+      }
+    }
+    exchange.close();
   }
 
   private static void write(HttpExchange exchange, int status, Object body) throws IOException {

@@ -29,6 +29,14 @@ public class OeClient {
     }
   }
 
+  /** Receives the {@code data} payload of each server-sent event. */
+  @FunctionalInterface
+  public interface EventHandler {
+
+    /** Handles one event; return false to stop reading the stream. */
+    boolean accept(String data) throws IOException;
+  }
+
   private static final Set<Integer> RETRYABLE = Set.of(502, 503, 504);
 
   private final String baseUrl;
@@ -51,6 +59,14 @@ public class OeClient {
    * @throws UncheckedIOException if every attempt failed to reach the OE
    */
   public Response postJson(String path, Object body, int attempts) {
+    return postJson(path, body, attempts, timeout);
+  }
+
+  /**
+   * Like {@link #postJson(String, Object, int)} with its own timeout, for calls the OE holds open
+   * while a tool or model runs.
+   */
+  public Response postJson(String path, Object body, int attempts, Duration callTimeout) {
     byte[] bytes;
     try {
       bytes = Json.mapper().writeValueAsBytes(body);
@@ -59,7 +75,7 @@ public class OeClient {
     }
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(baseUrl + path))
-            .timeout(timeout)
+            .timeout(callTimeout)
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
             .build();
@@ -84,6 +100,63 @@ public class OeClient {
         Thread.currentThread().interrupt();
         throw new UncheckedIOException(new InterruptedIOException("Interrupted while retrying"));
       }
+    }
+  }
+
+  /**
+   * POSTs to a stream URL the OE handed out and reads its server-sent events.
+   *
+   * <p>The URL must be on this client's OE: a stream URL is authoritative for what the runtime treats
+   * as model output, so a foreign one is refused rather than followed. A relative path is resolved
+   * against the OE.
+   *
+   * @return the HTTP status; the handler runs only for a 2xx response
+   * @throws IllegalArgumentException if the URL is not on the OE
+   * @throws UncheckedIOException on a network failure
+   */
+  public int postEvents(String streamUrl, Duration callTimeout, EventHandler handler) {
+    String url = streamUrl.startsWith("/") ? baseUrl + streamUrl : streamUrl;
+    if (!url.equals(baseUrl) && !url.startsWith(baseUrl + "/")) {
+      throw new IllegalArgumentException("Refusing a stream URL outside the orchestration engine: " + streamUrl);
+    }
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create(url))
+            .timeout(callTimeout)
+            .header("Accept", "text/event-stream")
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build();
+    try {
+      HttpResponse<java.util.stream.Stream<String>> response = http.send(request, HttpResponse.BodyHandlers.ofLines());
+      try (java.util.stream.Stream<String> lines = response.body()) {
+        if (response.statusCode() / 100 != 2) {
+          return response.statusCode();
+        }
+        StringBuilder data = new StringBuilder();
+        java.util.Iterator<String> iterator = lines.iterator();
+        while (iterator.hasNext()) {
+          String line = iterator.next();
+          if (line.isEmpty()) {
+            if (data.length() > 0 && !handler.accept(data.toString())) {
+              return response.statusCode();
+            }
+            data.setLength(0);
+          } else if (line.startsWith("data:")) {
+            if (data.length() > 0) {
+              data.append('\n');
+            }
+            data.append(line.substring(5).stripLeading());
+          }
+        }
+        if (data.length() > 0) {
+          handler.accept(data.toString());
+        }
+        return response.statusCode();
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new UncheckedIOException(new InterruptedIOException("Interrupted while reading the stream"));
     }
   }
 }

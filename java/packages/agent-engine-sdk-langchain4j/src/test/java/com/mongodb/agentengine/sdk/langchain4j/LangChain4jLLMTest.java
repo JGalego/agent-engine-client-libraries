@@ -204,6 +204,34 @@ class LangChain4jLLMTest {
   }
 
   @Test
+  void toolsInKwargsReplaceTheBoundTools() throws Exception {
+    JsonNode params = Json.mapper().readTree("{\"type\":\"object\",\"properties\":{}}");
+    var bound = new LLMToolSchema("bound", "Bound", params, null, null, null);
+    var model = new FakeChatModel(r -> answer("ok"));
+    var llm = LangChain4jLLM.builder().chatModel(model).tools(List.of(bound)).build();
+
+    llm.invoke(HELLO, Map.of("tools", List.of(Map.of("name", "per_call", "description", "Per call", "parameters", Map.of("type", "object", "properties", Map.of()))), "tool_choice", "required"));
+
+    assertEquals(List.of("per_call"), model.last.toolSpecifications().stream().map(t -> t.name()).toList());
+    assertEquals(ToolChoice.REQUIRED, model.last.toolChoice());
+  }
+
+  @Test
+  void toolChoiceKeywordsMapOntoLangChainChoices() throws Exception {
+    JsonNode params = Json.mapper().readTree("{\"type\":\"object\",\"properties\":{}}");
+    var tool = new LLMToolSchema("t", "T", params, null, null, null);
+    var model = new FakeChatModel(r -> answer("ok"));
+    var llm = LangChain4jLLM.builder().chatModel(model).tools(List.of(tool)).build();
+
+    llm.invoke(HELLO, Map.of("tool_choice", "auto"));
+    assertEquals(ToolChoice.AUTO, model.last.toolChoice());
+    llm.invoke(HELLO, Map.of("tool_choice", "none"));
+    assertEquals(ToolChoice.NONE, model.last.toolChoice());
+    llm.invoke(HELLO, Map.of("tool_choice", "t"));
+    assertEquals(ToolChoice.REQUIRED, model.last.toolChoice());
+  }
+
+  @Test
   void noToolsMeansNoToolSpecifications() {
     var model = new FakeChatModel(r -> answer("ok"));
 

@@ -3,10 +3,12 @@ package com.mongodb.agentengine.runner.server;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mongodb.agentengine.runner.ExecutionScope;
 import com.mongodb.agentengine.runner.OeClient;
 import com.mongodb.agentengine.runner.RunnableApp;
 import com.mongodb.agentengine.runner.RunnerConfig;
 import com.mongodb.agentengine.runner.RunnerMode;
+import com.mongodb.agentengine.runner.SecureExecution;
 import com.mongodb.agentengine.runner.models.AerExecuteResponse;
 import com.mongodb.agentengine.runner.models.ExecuteRequest;
 import com.mongodb.agentengine.runner.models.ExecutorCallback;
@@ -113,12 +115,15 @@ public final class AerServer extends ComponentServer {
     // The callback goes to the OE this runtime was configured with, never to a URL the request names:
     // a caller-chosen URL would let a request forge tool results and approval decisions.
     try {
-      BaseAgent agent = app().buildAgent();
-      AgentOutput output = agent.execute(context, new AgentInput(payload));
+      SecureExecution secure = new SecureExecution(app(), oe, request.executionId(), request.customHeaders());
+      AgentOutput output = ExecutionScope.call(secure, () -> {
+        BaseAgent agent = app().buildAgent();
+        return agent.execute(context, new AgentInput(payload));
+      });
       JsonNode result = output.response();
       deliver(ExecutorCallback.completed(request.executionId(), request.suspendGeneration(), result));
       return AerExecuteResponse.completed(result.isTextual() ? result.asText() : result.toString());
-    } catch (RuntimeException e) {
+    } catch (Exception e) {
       LOG.log(System.Logger.Level.ERROR, "Execution " + request.executionId() + " failed", e);
       deliver(ExecutorCallback.failed(request.executionId(), request.suspendGeneration(), String.valueOf(e.getMessage())));
       throw new HttpError(500, "Execution failed: " + e.getMessage());

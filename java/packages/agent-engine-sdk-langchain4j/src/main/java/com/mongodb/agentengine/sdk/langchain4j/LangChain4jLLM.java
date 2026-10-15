@@ -3,6 +3,7 @@ package com.mongodb.agentengine.sdk.langchain4j;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.mongodb.agentengine.sdk.BaseLLM;
+import com.mongodb.agentengine.sdk.Json;
 import com.mongodb.agentengine.sdk.LLMResponse;
 import com.mongodb.agentengine.sdk.LLMStreamChunk;
 import com.mongodb.agentengine.sdk.LLMTokenUsage;
@@ -24,6 +25,7 @@ import dev.langchain4j.model.output.TokenUsage;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -44,6 +46,11 @@ import java.util.stream.StreamSupport;
  * {@code top_p}, {@code top_k}, {@code frequency_penalty}, {@code presence_penalty}, {@code
  * max_tokens}, {@code stop} and {@code model}. LangChain4j has no request parameter for other
  * options, so they are ignored.
+ *
+ * <p>Two more keys carry the tools of a single call: {@code tools} (a list of {@link LLMToolSchema}s
+ * or their JSON maps) replaces the tools bound at build time, and {@code tool_choice} ({@code auto},
+ * {@code required}, {@code none}, or the name of a tool, which forces a call) replaces the bound
+ * choice. The agent runtime passes them when the orchestration engine routes a call here.
  */
 public final class LangChain4jLLM implements BaseLLM {
 
@@ -127,9 +134,11 @@ public final class LangChain4jLLM implements BaseLLM {
 
   private ChatRequest request(List<Message> messages, Map<String, Object> kwargs) {
     ChatRequest.Builder request = ChatRequest.builder().messages(Messages.toLangChain(messages));
-    if (!tools.isEmpty()) {
-      request.toolSpecifications(tools.stream().map(ToolSchemas::toToolSpecification).toList());
-      request.toolChoice(toolChoice);
+    List<LLMToolSchema> callTools = toolSchemas(kwargs.get("tools"));
+    List<LLMToolSchema> offered = callTools != null ? callTools : tools;
+    if (!offered.isEmpty()) {
+      request.toolSpecifications(offered.stream().map(ToolSchemas::toToolSpecification).toList());
+      request.toolChoice(toolChoice(kwargs.get("tool_choice"), toolChoice));
     }
     request.temperature(number(kwargs, "temperature", Number::doubleValue));
     request.topP(number(kwargs, "top_p", Number::doubleValue));
@@ -146,6 +155,26 @@ public final class LangChain4jLLM implements BaseLLM {
       request.stopSequences(List.of(stop));
     }
     return request.build();
+  }
+
+  private static List<LLMToolSchema> toolSchemas(Object value) {
+    if (!(value instanceof List<?> list)) {
+      return null;
+    }
+    return list.stream()
+        .map(item -> item instanceof LLMToolSchema schema ? schema : Json.mapper().convertValue(item, LLMToolSchema.class))
+        .toList();
+  }
+
+  private static ToolChoice toolChoice(Object value, ToolChoice fallback) {
+    if (value instanceof String choice) {
+      return switch (choice.toLowerCase(Locale.ROOT)) {
+        case "auto" -> ToolChoice.AUTO;
+        case "none" -> ToolChoice.NONE;
+        default -> ToolChoice.REQUIRED; // "required", "any", or the name of the one tool to call
+      };
+    }
+    return value != null ? ToolChoice.REQUIRED : fallback;
   }
 
   private static <T> T number(Map<String, Object> kwargs, String key, Function<Number, T> convert) {

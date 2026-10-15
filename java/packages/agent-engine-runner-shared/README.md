@@ -17,11 +17,11 @@ This package is a work in progress. It currently covers:
 | Agent runtime (port 8001): `/health`, `/`, `/tools`, `/execute`, `/warm-up` | done |
 | Capability advertisement to the OE at startup | done |
 | Completion and error callbacks to the OE | done |
-| Tool and LLM calls routed through the OE (`/tool/execute`, `/tool/result`, `/invoke_llm`) | planned |
-| Streaming (`/stream/chunk`), node execution logs, session queries | planned |
-| Suspend and resume, durable workflow (gRPC), drain, A2A | planned |
-
-The tool server (port 8002) serves `/health`, `/` and `/tools`; its other routes answer `501`.
+| Tool calls through the OE: local tools (`/tool/execute`, `/tool/result`) and remote tools (the OE runs them on the tool server) | done |
+| LLM calls through the OE, streamed from the tool server and folded into a response | done |
+| Tool server (port 8002): `/health`, `/`, `/tools`, `/execute`, `/invoke_llm`, `/invoke_llm/stream` | done |
+| Node execution logs, `/stream/chunk` custom output, session queries (`/query/sessions`) | planned |
+| Suspend and resume, durable workflow (gRPC), drain, A2A, guardrail checks | planned |
 
 ## How an agent plugs in
 
@@ -49,8 +49,36 @@ name: hello-java
 entrypoint: com.example.hello.HelloApp:app
 ```
 
-Then run `com.mongodb.agentengine.runner.Launcher` with the agent's classes on the classpath. See
-[`examples/hello-agent`](../../examples/hello-agent) for a complete agent and image.
+Then run `com.mongodb.agentengine.runner.Launcher` with the agent's classes on the classpath.
+
+## Tools and models
+
+Agents never call a model or a remote tool directly. Every call goes through the orchestration engine,
+which applies policy, records it, and runs it on the tool server, so secrets such as an LLM API key
+only need to exist there.
+
+```java
+SecureLlm llm = app.llm("gpt-4o-mini", provider);        // register the model; get a handle
+JsonNode date = app.callTool("get_current_date", Map.of()); // run a registered tool
+LLMResponse answer = llm.bindTools(app.toolSchemas()).invoke(messages);
+```
+
+- `app.llm(model, provider)` registers `provider`, a `BaseLLM`, for the tool server to run, and returns a
+  `SecureLlm` handle that agent code calls. The handle has no provider and no secrets, so it is safe to
+  create in agent code. Pass a LangChain4j model with `agent-engine-sdk-langchain4j`.
+- A tool is local (`remote(false)`) or remote (the default). The OE hands an approved local tool back
+  to the agent runtime, which runs it and reports the result; it runs a remote tool on the tool
+  server itself.
+- Both handles work only while the agent runs a turn. To use them from another thread, wrap the task
+  with `ExecutionScope.wrap`.
+- Calls are numbered in order across the execution, and the OE can answer a repeated call from its
+  cache.
+
+Provider options reach the tool server's provider as keyword arguments, with the reserved keys `model`,
+`stop`, `tools` and `tool_choice`.
+
+See [`examples/hello-agent`](../../examples/hello-agent) for the smallest agent and
+[`examples/assistant-agent`](../../examples/assistant-agent) for one that uses a model and a tool.
 
 ## Configuration
 
