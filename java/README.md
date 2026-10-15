@@ -35,6 +35,28 @@ want. It needs JDK 17+, Maven and git:
 curl -fsSL https://raw.githubusercontent.com/JGalego/agent-engine-client-libraries/<branch>/scripts/install-java-sdk.sh | bash -s -- --branch <branch>
 ```
 
+## Deploy to the managed platform
+
+The platform's CLI and build accept Python and TypeScript agents only, so a Java agent can't be
+deployed directly. [`scripts/package-java-agent.sh`](../scripts/package-java-agent.sh) wraps a built
+example in a small Python package whose entrypoint starts the JVM, with the JRE from the `jdk4py`
+wheel. It needs [uv](https://docs.astral.sh/uv/).
+
+```bash
+mvn package -DskipTests -pl examples/hello-agent -am
+../scripts/package-java-agent.sh examples/hello-agent    # writes examples/hello-agent/target/platform
+cd examples/hello-agent/target/platform
+agentengine init && agentengine deploy --auto
+```
+
+Platform settings such as network egress, sandboxes and features go in a `platform.yaml` next to the
+example's `agent.yaml`; without one the agent gets deny-all egress. `--include <path>[:<dest>]` ships
+extra files, such as a model. Deploying also needs an Atlas cluster, which `agentengine deploy` sets up
+for you.
+
+This works today but isn't supported: it sidesteps the CLI's language check and depends on how the
+runtime starts agents. `jdk4py` bundles OpenJDK under the GPL; check its terms for your use.
+
 ## Development
 
 ```bash
