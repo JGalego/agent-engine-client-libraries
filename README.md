@@ -15,6 +15,7 @@ API references and guides for the SDKs are in this repository:
 
 - [TypeScript SDKs](javascript/docs/README.md)
 - [Python SDKs](python/docs/README.md)
+- [Java SDKs](java/docs/README.md)
 
 ## Container images
 
