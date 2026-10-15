@@ -12,24 +12,11 @@ and `SecureLlm`.
 
 The CLI and the agent share the retrieval code. Only the agent runs on the Atlas Agent Engine.
 
-```mermaid
-flowchart LR
-  subgraph cli["CLI demo (no Agent Engine)"]
-    main["ZooMain<br/>dashboard, ingest, search, demo"]
-  end
+![Embedding Zoo on the Atlas Agent Engine](docs/architecture.png)
 
-  subgraph engine["Agent Engine (local stack)"]
-    client["curl /invoke"] --> oe["Orchestration Engine"]
-    oe -->|"/execute"| aer["Agent runtime :8001<br/>EmbeddingZooAgent"]
-    aer -->|"model and tool calls"| oe
-    oe -->|"approved calls"| tool["Tool server :8002<br/>OpenAI chat provider<br/>semantic_search, filter_metadata,<br/>correlate_evidence"]
-  end
-
-  main --> kit["ZooToolkit<br/>MiniLM embedder, correlator"]
-  tool --> kit
-  kit --> store[("Vector store<br/>in memory, or MongoDB Atlas<br/>Vector Search")]
-  tool -.->|"chat completions"| openai["OpenAI API"]
-```
+The diagram shows the managed deployment; the local stack has the same pieces as Docker containers.
+It is code: `uv run docs/architecture.py` redraws it (needs Graphviz). Logos belong to
+their owners; the script fetches the ones the `diagrams` package lacks from Simple Icons.
 
 | | CLI demo | Agent |
 |---|---|---|
