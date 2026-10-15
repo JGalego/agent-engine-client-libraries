@@ -30,8 +30,10 @@
     <module>packages/agent-engine-sdk-memory</module>
     <module>packages/agent-engine-sdk-langchain4j</module>
     <module>packages/agent-engine-runner-shared</module>
+    <module>packages/agent-engine-sdk-langgraph4j</module>
     <module>examples/hello-agent</module>
     <module>examples/assistant-agent</module>
+    <module>examples/graph-agent</module>
   </modules>
 
   <properties>
@@ -40,6 +42,7 @@
     <jackson.version>2.18.2</jackson.version>
     <junit.version>5.11.4</junit.version>
     <langchain4j.version>1.22.0</langchain4j.version>
+    <langgraph4j.version>1.9.5</langgraph4j.version>
   </properties>
 
   <dependencyManagement>
@@ -71,6 +74,11 @@
       <dependency>
         <groupId>com.mongodb.agentengine</groupId>
         <artifactId>agent-engine-runner-shared</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.mongodb.agentengine</groupId>
+        <artifactId>agent-engine-sdk-langgraph4j</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>

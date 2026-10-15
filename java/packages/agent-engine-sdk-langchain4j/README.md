@@ -49,6 +49,14 @@ try (Stream<LLMStreamChunk> chunks = llm.stream(List.of(Message.user("Tell me a 
 - To offer tools on every call, pass `LLMToolSchema`s to `.tools(...)` and, optionally, a
   `ToolChoice` to `.toolChoice(...)`.
 
+### Using a platform model from LangChain4j
+
+`BaseLlmChatModel` and `BaseLlmStreamingChatModel` are the inverse: they expose any `BaseLLM`, such as
+the runtime's platform-routed `SecureLlm`, as a LangChain4j `ChatModel` or `StreamingChatModel`. Code
+written for LangChain4j or LangGraph4j then runs on that model, and every call still goes through the
+Orchestration Engine. A request's sampling parameters, stop sequences, tools and tool choice are passed
+as the `kwargs` documented above.
+
 ### Messages and tools
 
 `Messages` converts in both directions. A platform tool message without a tool call id is skipped

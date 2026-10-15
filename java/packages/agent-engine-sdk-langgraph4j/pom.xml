@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.mongodb.agentengine</groupId>
+    <artifactId>agent-engine-sdk-parent</artifactId>
+    <version>0.11.9</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>agent-engine-sdk-langgraph4j</artifactId>
+  <name>Agent Engine SDK LangGraph4j</name>
+  <description>The LangGraph4j framework SDK for the Atlas Agent Engine</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.mongodb.agentengine</groupId>
+      <artifactId>agent-engine-runner-shared</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.mongodb.agentengine</groupId>
+      <artifactId>agent-engine-sdk-langchain4j</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.bsc.langgraph4j</groupId>
+      <artifactId>langgraph4j-core</artifactId>
+      <version>${langgraph4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.bsc.langgraph4j</groupId>
+      <artifactId>langgraph4j-langchain4j-agentexecutor</artifactId>
+      <version>${langgraph4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

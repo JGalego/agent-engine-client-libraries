@@ -7,6 +7,11 @@ source with `mvn javadoc:javadoc`; this page indexes it alongside the package gu
 
 - [README](../packages/agent-engine-sdk-memory/README.md)
 
+## LangGraph4j adapter — `agent-engine-sdk-langgraph4j`
+
+- [README](../packages/agent-engine-sdk-langgraph4j/README.md)
+- Example: [graph-agent](../examples/graph-agent/README.md)
+
 ## LangChain4j adapters — `agent-engine-sdk-langchain4j`
 
 - [README](../packages/agent-engine-sdk-langchain4j/README.md)

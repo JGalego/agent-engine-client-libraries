@@ -104,12 +104,15 @@ public final class Messages {
     if (message.toolCalls() == null || message.toolCalls().isEmpty()) {
       return AiMessage.from(text);
     }
-    List<ToolExecutionRequest> requests = new ArrayList<>();
-    for (LLMToolCall call : message.toolCalls()) {
-      requests.add(
-          ToolExecutionRequest.builder().id(call.id()).name(call.name()).arguments(arguments(call.args())).build());
+    return AiMessage.from(text.isEmpty() ? null : text, toolExecutionRequests(message.toolCalls()));
+  }
+
+  static List<ToolExecutionRequest> toolExecutionRequests(List<LLMToolCall> calls) {
+    List<ToolExecutionRequest> requests = new ArrayList<>(calls.size());
+    for (LLMToolCall call : calls) {
+      requests.add(ToolExecutionRequest.builder().id(call.id()).name(call.name()).arguments(arguments(call.args())).build());
     }
-    return AiMessage.from(text.isEmpty() ? null : text, requests);
+    return requests;
   }
 
   private static Optional<ChatMessage> toolResult(Message message) {
