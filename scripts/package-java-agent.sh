@@ -2,13 +2,15 @@
 # Package a built Java example as a directory the Agent Engine CLI can build and deploy.
 #
 # Usage:
-#   package-java-agent.sh <example-dir> [--out <dir>] [--include <path>[:<dest>]]...
+#   package-java-agent.sh <example-dir> [--out <dir>] [--include <path>[:<dest>]]... [--prune <jar>:<entry>[,<entry>...]]...
 #
 # Run `mvn package` on the example first. The output holds a Python shim that starts the JVM, the
 # agent's jars, its agent.yaml, and a platform agent.yaml. Extra platform settings (network egress,
 # sandboxes, features, version) come from a platform.yaml in the example; without one the agent gets
 # deny-all egress. --include copies a file or directory into the package, to <dest> (default: its
-# basename) relative to the package root.
+# basename) relative to the package root. --prune deletes zip entries (shell patterns) from a jar in
+# the package, to stay under the platform's 50 MiB source limit: native libraries for other platforms
+# are the usual weight.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,9 +18,10 @@ SHIM="$ROOT/java/shim"
 EXAMPLE=""
 OUT=""
 INCLUDES=()
+PRUNES=()
 
 usage() {
-  sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -27,6 +30,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --out)     OUT="${2:?--out needs a value}"; shift 2 ;;
     --include) INCLUDES+=("${2:?--include needs a value}"); shift 2 ;;
+    --prune)   PRUNES+=("${2:?--prune needs a value}"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*)        printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     *)         [ -z "$EXAMPLE" ] || die "only one example directory"; EXAMPLE="$1"; shift ;;
@@ -65,6 +69,17 @@ for include in ${INCLUDES[@]+"${INCLUDES[@]}"}; do
   cp -R "$src" "$OUT/$dest"
 done
 
+for prune in ${PRUNES[@]+"${PRUNES[@]}"}; do
+  command -v zip >/dev/null || die "zip is required for --prune"
+  jar_name="${prune%%:*}"
+  [ "$jar_name" != "$prune" ] || die "--prune needs <jar>:<entry>[,<entry>...]"
+  IFS=',' read -r -a entries <<< "${prune#*:}"
+  for jar in "$OUT"/java/lib/$jar_name; do
+    [ -f "$jar" ] || die "--prune: no jar matches $jar_name"
+    zip -q -d "$jar" "${entries[@]}" >/dev/null || true
+  done
+done
+
 {
   printf 'name: %s\n' "$SAFE_NAME"
   printf 'entrypoint: java_shim:app\n'
@@ -81,5 +96,9 @@ done
 (cd "$OUT" && uv lock --quiet)
 
 printf 'Packaged %s in %s\n' "$NAME" "$OUT"
+LIMIT=$((50 * 1024 * 1024))
+SIZE="$(tar -czf - -C "$OUT" . | wc -c)"
+printf 'Compressed size: %s MiB (the platform accepts at most 50)\n' "$((SIZE / 1024 / 1024))"
+[ "$SIZE" -le "$LIMIT" ] || printf 'warning: over the platform'"'"'s source limit; the build will be refused\n' >&2
 printf 'Next, from that directory:\n'
 printf '  agentengine init && agentengine deploy --auto\n'

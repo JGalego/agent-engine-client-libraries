@@ -69,6 +69,11 @@ public final class ZooMain {
       System.err.println("Downloading MiniLM ONNX (about 90 MB)");
       HttpTexts.download(URI.create(Datasets.ONNX_URL), model);
     }
+    Path quantized = config.modelDir().resolve("model_quantized.onnx");
+    if (!Files.isRegularFile(quantized)) {
+      System.err.println("Downloading the int8 MiniLM ONNX (about 23 MB)");
+      HttpTexts.download(URI.create(Datasets.ONNX_INT8_URL), quantized);
+    }
     LogHubIngestor.ensure(config);
     ImsAcquisition.ensure(config);
     System.err.println("Download finished. MVTec AD is not fetched automatically (CC BY-NC-SA 4.0, large archive).");

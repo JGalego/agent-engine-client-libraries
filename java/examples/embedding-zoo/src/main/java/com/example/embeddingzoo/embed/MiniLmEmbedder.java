@@ -25,22 +25,34 @@ public final class MiniLmEmbedder implements TextEmbedder, AutoCloseable {
 
   static final int MAX_LENGTH = 256;
 
+  private final boolean int8;
   private final WordPieceTokenizer tokenizer;
   private final OrtEnvironment environment;
   private final OrtSession session;
   private final int dimensions;
 
-  private MiniLmEmbedder(WordPieceTokenizer tokenizer, OrtEnvironment environment, OrtSession session, int dimensions) {
+  private MiniLmEmbedder(
+      boolean int8, WordPieceTokenizer tokenizer, OrtEnvironment environment, OrtSession session, int dimensions) {
+    this.int8 = int8;
     this.tokenizer = tokenizer;
     this.environment = environment;
     this.session = session;
     this.dimensions = dimensions;
   }
 
+  /** The float32 export. */
   public static MiniLmEmbedder open(ZooConfig config) throws IOException {
+    return open(config, false);
+  }
+
+  /**
+   * @param int8 use the quantized export, about a quarter of the size. Its vectors differ slightly, so
+   *     it reports its own model id and is never compared with the float32 model's.
+   */
+  public static MiniLmEmbedder open(ZooConfig config, boolean int8) throws IOException {
     Path dir = config.modelDir();
     Path vocab = dir.resolve("vocab.txt");
-    Path model = dir.resolve("model.onnx");
+    Path model = dir.resolve(int8 ? "model_quantized.onnx" : "model.onnx");
     if (!Files.isRegularFile(vocab) || !Files.isRegularFile(model)) {
       throw new IOException(
           "MiniLM files are missing under " + dir + ". Run: mvn -pl examples/embedding-zoo exec:java -Dexec.args=download");
@@ -52,7 +64,7 @@ public final class MiniLmEmbedder implements TextEmbedder, AutoCloseable {
       options.setIntraOpNumThreads(Math.max(1, Runtime.getRuntime().availableProcessors() / 2));
       OrtSession session = environment.createSession(model.toString(), options);
       int dimensions = readDimensions(session);
-      return new MiniLmEmbedder(tokenizer, environment, session, dimensions);
+      return new MiniLmEmbedder(int8, tokenizer, environment, session, dimensions);
     } catch (OrtException e) {
       throw new IOException("Could not load MiniLM from " + model, e);
     }
@@ -60,12 +72,12 @@ public final class MiniLmEmbedder implements TextEmbedder, AutoCloseable {
 
   @Override
   public String modelId() {
-    return Datasets.TEXT_MODEL;
+    return int8 ? Datasets.TEXT_MODEL_INT8 : Datasets.TEXT_MODEL;
   }
 
   @Override
   public String artifact() {
-    return Datasets.TEXT_ARTIFACT;
+    return int8 ? Datasets.TEXT_ARTIFACT_INT8 : Datasets.TEXT_ARTIFACT;
   }
 
   @Override

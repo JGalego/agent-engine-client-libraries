@@ -10,8 +10,12 @@ public final class Datasets {
 
   public static final String TEXT_MODEL = "sentence-transformers/all-MiniLM-L6-v2";
   public static final String TEXT_ARTIFACT = "Xenova/all-MiniLM-L6-v2/onnx/model.onnx";
+  public static final String TEXT_MODEL_INT8 = TEXT_MODEL + ":int8";
+  public static final String TEXT_ARTIFACT_INT8 = "Xenova/all-MiniLM-L6-v2/onnx/model_quantized.onnx";
   public static final String TEXT_LICENSE = "Apache-2.0";
   public static final String TEXT_LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0.txt";
+  public static final String ONNX_INT8_URL =
+      "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx";
   public static final String VOCAB_URL =
       "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/vocab.txt";
   public static final String ONNX_URL =

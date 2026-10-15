@@ -198,25 +198,35 @@ container itself.
 ## Managed platform
 
 The packaging script in [`java/README.md`](../../README.md#deploy-to-the-managed-platform) wraps the
-agent for the managed platform. This example's `platform.yaml` lists the three tools and allows
-egress to `api.openai.com`; the model files ship in the package.
+agent for the managed platform. This example's `platform.yaml` lists the tools and allows egress to
+`api.openai.com`. The platform accepts at most 50 MiB of source, so the package ships the int8 MiniLM
+(23 MB, `EMBEDDING_ZOO_TEXT_PROVIDER=minilm-int8`, model id `...:int8`) and drops the ONNX runtime's
+natives for other platforms. Its vectors differ slightly from the float32 model's, so ingest into a
+separate collection and never mix the two.
 
 ```bash
-mvn package -DskipTests -pl examples/embedding-zoo -am        # from java/
+cd java
+mvn package -DskipTests -pl examples/embedding-zoo -am
+M=examples/embedding-zoo/data/models/minilm
 ../scripts/package-java-agent.sh examples/embedding-zoo \
-  --include examples/embedding-zoo/data/models/minilm:data/models/minilm
+  --include $M/vocab.txt:data/models/minilm/vocab.txt \
+  --include $M/model_quantized.onnx:data/models/minilm/model_quantized.onnx \
+  --prune 'onnxruntime-*.jar:ai/onnxruntime/native/win-*,ai/onnxruntime/native/osx-*,ai/onnxruntime/native/linux-aarch64/*'
 cd examples/embedding-zoo/target/platform
 agentengine init
 agentengine atlas setup                                     # creates a billed Atlas cluster
 agentengine secret set OPENAI_API_KEY
+agentengine secret set EMBEDDING_ZOO_TEXT_PROVIDER          # minilm-int8
+agentengine secret set MONGODB_COLLECTION                   # evidence_int8
 ```
 
 The tool sandbox searches the cluster `atlas setup` creates, so ingest into that cluster from your
-machine first: allow your IP in Atlas, set `MONGODB_URI` to the URI `atlas setup` printed, and run
-`ingest` from `java/` (with the `MAVEN_OPTS` from the CLI demo section, or the JIT crash can hit):
+machine first. Allow your IP in Atlas, then run `ingest` from `java/` with the same settings (and the
+`MAVEN_OPTS` from the CLI demo section, or the JIT crash can hit):
 
 ```bash
 export MAVEN_OPTS="-Xmx4g -XX:-UseSuperWord"
+export MONGODB_URI='<the URI atlas setup printed>' EMBEDDING_ZOO_TEXT_PROVIDER=minilm-int8 MONGODB_COLLECTION=evidence_int8
 mvn -pl examples/embedding-zoo compile exec:java -Dexec.args=ingest
 ```
 

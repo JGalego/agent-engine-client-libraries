@@ -16,7 +16,10 @@ public final class TextEmbedders {
     if ("minilm".equalsIgnoreCase(provider)) {
       return MiniLmEmbedder.open(config);
     }
+    if ("minilm-int8".equalsIgnoreCase(provider)) {
+      return MiniLmEmbedder.open(config, true);
+    }
     throw new IllegalArgumentException(
-        "EMBEDDING_ZOO_TEXT_PROVIDER must be minilm or openai, not " + provider);
+        "EMBEDDING_ZOO_TEXT_PROVIDER must be minilm, minilm-int8 or openai, not " + provider);
   }
 }

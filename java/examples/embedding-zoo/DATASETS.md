@@ -74,6 +74,7 @@ The archive is large and is not downloaded automatically. Place files yourself a
 | Space | Id | Notes |
 |---|---|---|
 | Text | `sentence-transformers/all-MiniLM-L6-v2` | Apache-2.0. ONNX file `Xenova/all-MiniLM-L6-v2/onnx/model.onnx`. |
+| Text, int8 | `sentence-transformers/all-MiniLM-L6-v2:int8` | The same model, quantized (`.../onnx/model_quantized.onnx`, `EMBEDDING_ZOO_TEXT_PROVIDER=minilm-int8`). A separate model id: never compare its vectors with the float32 ones. |
 | Vibration | `embedding-zoo/ims-vibration-features-v1` | Classical features of one channel. Same model required before two vibration vectors are compared. |
 | Image | `embedding-zoo/rgb-histogram-4x4x4-v1` | 64-bin RGB histogram. Appearance only. |
 

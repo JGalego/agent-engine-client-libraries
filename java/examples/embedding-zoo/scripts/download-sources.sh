@@ -22,6 +22,8 @@ fetch "$ROOT/data/models/minilm/tokenizer.json" \
   "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
 fetch "$ROOT/data/models/minilm/model.onnx" \
   "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+fetch "$ROOT/data/models/minilm/model_quantized.onnx" \
+  "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx"
 fetch "$ROOT/data/logs/HDFS_2k.log" \
   "https://raw.githubusercontent.com/logpai/loghub/master/HDFS/HDFS_2k.log"
 fetch "$ROOT/data/logs/HDFS_README.md" \
