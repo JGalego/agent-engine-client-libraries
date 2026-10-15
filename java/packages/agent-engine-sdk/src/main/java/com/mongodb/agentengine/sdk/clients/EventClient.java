@@ -37,7 +37,7 @@ public final class EventClient {
 
   /** Creates a client whose requests give up after {@code timeout}. */
   public EventClient(String oeUrl, Duration timeout) {
-    this(oeUrl, timeout, HttpClient.newBuilder().connectTimeout(timeout).build());
+    this(oeUrl, timeout, Http.newClient(timeout));
   }
 
   /** Creates a client over a caller-configured {@link HttpClient}, for custom TLS or proxies. */

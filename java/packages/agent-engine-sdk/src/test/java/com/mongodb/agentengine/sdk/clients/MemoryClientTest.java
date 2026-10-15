@@ -510,6 +510,16 @@ class MemoryClientTest {
   }
 
   @Test
+  void plainHttpRequestsDoNotAskForAnH2cUpgrade() {
+    server.reply(200, "{\"domains\":[]}");
+
+    client().build().getDistinctDomains(null);
+
+    assertNull(server.only().header("Upgrade"));
+    assertNull(server.only().header("HTTP2-Settings"));
+  }
+
+  @Test
   void clientErrorsAreNotRetried() {
     server.reply(400, "bad").reply(200, "{\"domains\":[]}");
 

@@ -45,6 +45,15 @@ final class Http {
 
   private Http() {}
 
+  /**
+   * Creates the default client. It speaks HTTP/1.1 only: on plain {@code http://} URLs the JDK
+   * client otherwise asks to upgrade to HTTP/2, and ASGI servers such as the local memory stack
+   * (uvicorn) then drop the request body.
+   */
+  static HttpClient newClient(Duration connectTimeout) {
+    return HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(connectTimeout).build();
+  }
+
   /** Sends one request. Transport failures surface as {@link UncheckedIOException}. */
   static Response send(
       HttpClient client,

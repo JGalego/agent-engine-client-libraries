@@ -97,7 +97,7 @@ public final class MemoryClient {
     this.apiPrefix = "/" + b.apiPrefix.replaceAll("^/+|/+$", "");
     this.maxRetries = Math.max(0, b.maxRetries);
     this.routeStyle = b.routeStyle;
-    this.http = b.http != null ? b.http : HttpClient.newBuilder().connectTimeout(b.timeout).build();
+    this.http = b.http != null ? b.http : Http.newClient(b.timeout);
   }
 
   /** Starts a client for the memory server (or proxy) at {@code baseUrl}. */
