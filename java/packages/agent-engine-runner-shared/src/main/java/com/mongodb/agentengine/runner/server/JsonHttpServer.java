@@ -8,8 +8,11 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -19,17 +22,31 @@ import java.util.concurrent.atomic.AtomicInteger;
  * A small JSON-over-HTTP server on the JDK's built-in {@link HttpServer}.
  *
  * <p>Handlers return the response body, which is serialized as JSON, and report failures by
- * throwing {@link HttpError}. Unknown paths answer 404 and known paths with another method answer
+ * throwing {@link HttpError}. A route path may name segments in braces, such as {@code
+ * /sessions/{id}/messages}; their values are in {@link Request#pathParams()}. Unknown paths answer 404 and known paths with another method answer
  * 405, both as {@code {"detail": ...}}.
  */
 public final class JsonHttpServer implements AutoCloseable {
 
   /** A request as a handler sees it. */
-  public record Request(String method, URI uri, byte[] body) {
+  public record Request(String method, URI uri, byte[] body, Map<String, String> pathParams) {
 
     /** The raw query string, or the empty string. */
     public String query() {
       return uri.getRawQuery() == null ? "" : uri.getRawQuery();
+    }
+
+    /** The decoded values of a query parameter, in order; repeated parameters give several. */
+    public List<String> queryValues(String name) {
+      List<String> values = new ArrayList<>();
+      for (String pair : query().split("&")) {
+        int eq = pair.indexOf('=');
+        String key = URLDecoder.decode(eq < 0 ? pair : pair.substring(0, eq), StandardCharsets.UTF_8);
+        if (key.equals(name)) {
+          values.add(eq < 0 ? "" : URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+        }
+      }
+      return values;
     }
 
     /**
@@ -104,7 +121,7 @@ public final class JsonHttpServer implements AutoCloseable {
     server.createContext("/", this::dispatch);
   }
 
-  /** Registers a handler for {@code method} on the exact {@code path}. */
+  /** Registers a handler for {@code method} on {@code path}. */
   public JsonHttpServer route(String method, String path, Handler handler) {
     routes.computeIfAbsent(path, p -> new LinkedHashMap<>()).put(method, handler);
     return this;
@@ -129,7 +146,12 @@ public final class JsonHttpServer implements AutoCloseable {
     int status;
     Object body;
     try {
-      Map<String, Handler> byMethod = routes.get(exchange.getRequestURI().getPath());
+      String path = exchange.getRequestURI().getRawPath();
+      Map<String, String> pathParams = new LinkedHashMap<>();
+      Map<String, Handler> byMethod = routes.get(path);
+      if (byMethod == null) {
+        byMethod = matchTemplate(path, pathParams);
+      }
       if (byMethod == null) {
         throw new HttpError(404, "Not Found");
       }
@@ -138,7 +160,7 @@ public final class JsonHttpServer implements AutoCloseable {
         throw new HttpError(405, "Method Not Allowed");
       }
       byte[] requestBody = exchange.getRequestBody().readAllBytes();
-      Reply reply = handler.handle(new Request(exchange.getRequestMethod(), exchange.getRequestURI(), requestBody));
+      Reply reply = handler.handle(new Request(exchange.getRequestMethod(), exchange.getRequestURI(), requestBody, pathParams));
       status = reply.status();
       body = reply.body();
     } catch (HttpError e) {
@@ -154,6 +176,32 @@ public final class JsonHttpServer implements AutoCloseable {
     } else {
       write(exchange, status, body);
     }
+  }
+
+  /** Finds the route whose braced segments match {@code path}, collecting their decoded values. */
+  private Map<String, Handler> matchTemplate(String path, Map<String, String> pathParams) {
+    String[] actual = path.split("/", -1);
+    for (Map.Entry<String, Map<String, Handler>> route : routes.entrySet()) {
+      String[] template = route.getKey().split("/", -1);
+      if (template.length != actual.length) {
+        continue;
+      }
+      Map<String, String> found = new LinkedHashMap<>();
+      boolean matches = true;
+      for (int i = 0; i < template.length && matches; i++) {
+        if (template[i].startsWith("{") && template[i].endsWith("}")) {
+          matches = !actual[i].isEmpty();
+          found.put(template[i].substring(1, template[i].length() - 1), URLDecoder.decode(actual[i].replace("+", "%2B"), StandardCharsets.UTF_8));
+        } else {
+          matches = template[i].equals(actual[i]);
+        }
+      }
+      if (matches) {
+        pathParams.putAll(found);
+        return route.getValue();
+      }
+    }
+    return null;
   }
 
   private static void writeEvents(HttpExchange exchange, EventStream stream) throws IOException {

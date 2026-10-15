@@ -1,0 +1,3 @@
+name: approval-java
+entrypoint: com.example.approval.ApprovalApp:app
+framework: none

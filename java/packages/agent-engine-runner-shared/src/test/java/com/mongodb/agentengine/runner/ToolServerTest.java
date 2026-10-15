@@ -12,6 +12,7 @@ import com.mongodb.agentengine.sdk.Json;
 import com.mongodb.agentengine.sdk.LLMStreamChunk;
 import com.mongodb.agentengine.sdk.LLMTokenUsage;
 import com.mongodb.agentengine.sdk.ToolCallChunk;
+import com.mongodb.agentengine.sdk.SuspendException;
 import com.mongodb.agentengine.sdk.ToolDefinition;
 import java.util.ArrayList;
 import java.util.List;
@@ -111,6 +112,20 @@ class ToolServerTest {
 
     assertEquals("error", body.get("status").asText());
     assertEquals("kaput", body.get("error").asText());
+  }
+
+  @Test
+  void aSuspendingToolIsReportedWithTheSuspendStatus() throws Exception {
+    app.tool(ToolDefinition.builder("review", "Asks a human", Map.of(), args -> {
+      throw new SuspendException("awaiting_human_review", Map.of("claim", "C-1"));
+    }).build());
+
+    JsonNode body = json(post("/execute", "{\"execution_id\":\"e1\",\"tool_name\":\"review\",\"arguments\":{}}").body());
+
+    assertEquals("suspend", body.get("status").asText());
+    assertEquals(
+        json("{\"suspend_reason\":\"awaiting_human_review\",\"suspend_context\":{\"claim\":\"C-1\"},\"__suspend__\":true}"),
+        json(body.get("result").asText()));
   }
 
   @Test

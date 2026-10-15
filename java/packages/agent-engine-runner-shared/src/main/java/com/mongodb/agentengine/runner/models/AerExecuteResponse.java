@@ -12,4 +12,8 @@ public record AerExecuteResponse(String status, String result, String suspendRea
   public static AerExecuteResponse completed(String result) {
     return new AerExecuteResponse("completed", result, null);
   }
+
+  public static AerExecuteResponse suspended(String reason) {
+    return new AerExecuteResponse("suspended", null, reason);
+  }
 }

@@ -65,12 +65,16 @@ public final class LangGraph4jAgent<S extends MessagesState<ChatMessage>> implem
   /** The conversation key: the session, scoped to the workspace so agents sharing a store cannot collide. */
   static RunnableConfig config(RequestContext ctx, boolean carryExecution) {
     String session = ctx.sessionId() != null && !ctx.sessionId().isBlank() ? ctx.sessionId() : ctx.executionId();
-    boolean scoped = ctx.workspaceId() != null && !ctx.workspaceId().isBlank();
-    RunnableConfig.Builder config = RunnableConfig.builder().threadId(scoped ? session + ":" + ctx.workspaceId() : session);
+    RunnableConfig.Builder config = RunnableConfig.builder().threadId(threadId(session, ctx.workspaceId()));
     if (carryExecution && ExecutionScope.isActive()) {
       config.emitterExecutor(new ScopedExecutor());
     }
     return config.build();
+  }
+
+  /** The checkpointer's thread for a session, scoped to the workspace when there is one. */
+  static String threadId(String session, String workspaceId) {
+    return workspaceId == null || workspaceId.isBlank() ? session : session + ":" + workspaceId;
   }
 
   private static String answer(MessagesState<ChatMessage> state) {

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.mongodb.agentengine.runner.RunnableApp;
 import com.mongodb.agentengine.runner.RunnerConfig;
 import com.mongodb.agentengine.runner.RunnerMode;
+import com.mongodb.agentengine.runner.SuspendMarker;
 import com.mongodb.agentengine.runner.models.InvokeLlmArguments;
 import com.mongodb.agentengine.runner.models.LlmPodInvokeRequest;
 import com.mongodb.agentengine.runner.models.LlmPodInvokeResponse;
@@ -15,6 +16,7 @@ import com.mongodb.agentengine.sdk.Json;
 import com.mongodb.agentengine.sdk.LLMResponse;
 import com.mongodb.agentengine.sdk.LLMStreamChunk;
 import com.mongodb.agentengine.sdk.LLMTokenUsage;
+import com.mongodb.agentengine.sdk.SuspendException;
 import com.mongodb.agentengine.sdk.ToolDefinition;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -61,6 +63,8 @@ public final class ToolServer extends ComponentServer {
       Object value = tool.callable().call(request.arguments());
       JsonNode result = Json.mapper().valueToTree(value);
       return new ToolPodExecuteResponse("success", result, null, podName, null, Map.of(), true);
+    } catch (SuspendException e) {
+      return new ToolPodExecuteResponse("suspend", Json.mapper().getNodeFactory().textNode(SuspendMarker.encode(e)), null, podName, null, Map.of(), true);
     } catch (Exception e) {
       LOG.log(System.Logger.Level.WARNING, "Tool " + request.toolName() + " failed", e);
       return failure(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());

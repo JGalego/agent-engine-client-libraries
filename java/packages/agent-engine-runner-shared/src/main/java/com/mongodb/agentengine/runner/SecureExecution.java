@@ -9,11 +9,13 @@ import com.mongodb.agentengine.runner.models.LlmPodStreamEvent;
 import com.mongodb.agentengine.runner.models.ToolExecuteRequest;
 import com.mongodb.agentengine.runner.models.ToolExecuteResponse;
 import com.mongodb.agentengine.runner.models.ToolResultRequest;
+import com.mongodb.agentengine.sdk.BaseExecutionCallback;
 import com.mongodb.agentengine.sdk.Json;
 import com.mongodb.agentengine.sdk.LLMResponse;
 import com.mongodb.agentengine.sdk.LLMStreamChunk;
 import com.mongodb.agentengine.sdk.LLMToolSchema;
 import com.mongodb.agentengine.sdk.Message;
+import com.mongodb.agentengine.sdk.SuspendException;
 import com.mongodb.agentengine.sdk.ToolCallChunk;
 import com.mongodb.agentengine.sdk.ToolDefinition;
 import java.io.IOException;
@@ -21,6 +23,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
@@ -44,12 +47,31 @@ public final class SecureExecution {
   private final String executionId;
   private final Map<String, String> customHeaders;
   private final AtomicInteger step = new AtomicInteger();
+  private volatile Consumer<String> tokens = text -> {};
+  private volatile BaseExecutionCallback nodes = new BaseExecutionCallback() {};
 
   public SecureExecution(RunnableApp app, OeClient oe, String executionId, Map<String, String> customHeaders) {
     this.app = app;
     this.oe = oe;
     this.executionId = executionId;
     this.customHeaders = customHeaders;
+  }
+
+  /** Sets where the text of streamed LLM responses goes as it arrives; the default drops it. */
+  public SecureExecution onText(Consumer<String> sink) {
+    this.tokens = sink;
+    return this;
+  }
+
+  /** Sets where the nodes an agent runs are reported; the default ignores them. */
+  public SecureExecution onNodes(BaseExecutionCallback callback) {
+    this.nodes = callback;
+    return this;
+  }
+
+  /** Where agents report the nodes they run, for the platform's execution traces. */
+  public BaseExecutionCallback nodes() {
+    return nodes;
   }
 
   /** The id of the execution. */
@@ -124,7 +146,7 @@ public final class SecureExecution {
       case "interrupted":
         return JsonNodeFactory.instance.objectNode().put("interrupted", true);
       case "suspend":
-        throw new UnsupportedOperationException("Suspending an execution is not supported yet");
+        throw SuspendMarker.decode(response.result());
       case "error":
         throw new ToolExecutionException(response.error() == null ? "Unknown error" : response.error());
       default:
@@ -139,15 +161,22 @@ public final class SecureExecution {
     try {
       Object value = tool.callable().call(arguments);
       result = Json.mapper().valueToTree(value);
+    } catch (SuspendException e) {
+      report(new ToolResultRequest(executionId, callStep, tool.name(), toolCallId, "suspend", Json.mapper().valueToTree(SuspendMarker.encode(e)), null, millisSince(started), null, Map.of()));
+      throw e;
     } catch (Exception e) {
       error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
     }
-    double durationMs = (System.nanoTime() - started) / 1_000_000.0;
+    double durationMs = millisSince(started);
     report(new ToolResultRequest(executionId, callStep, tool.name(), toolCallId, error == null ? "success" : "error", result, error, durationMs, null, Map.of()));
     if (error != null) {
       throw new ToolExecutionException(error);
     }
     return result;
+  }
+
+  private static double millisSince(long startNanos) {
+    return (System.nanoTime() - startNanos) / 1_000_000.0;
   }
 
   private void report(ToolResultRequest result) {
@@ -251,7 +280,12 @@ public final class SecureExecution {
                 }
                 return false;
               }
-              chunkOf(event).ifPresent(chunks::add);
+              chunkOf(event).ifPresent(chunk -> {
+                chunks.add(chunk);
+                if (chunk.content() != null) {
+                  tokens.accept(chunk.content());
+                }
+              });
               return true;
             });
     if (status / 100 != 2) {

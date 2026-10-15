@@ -1,5 +1,6 @@
 package com.mongodb.agentengine.sdk.langgraph4j;
 
+import com.mongodb.agentengine.runner.ExecutionScope;
 import com.mongodb.agentengine.runner.RunnableApp;
 import com.mongodb.agentengine.sdk.BaseAgent;
 import com.mongodb.agentengine.sdk.BaseLLM;
@@ -40,7 +41,8 @@ import org.bsc.langgraph4j.state.AgentState;
  * }</pre>
  *
  * <p>The graph is rebuilt for every execution. Conversation state lives in the app's checkpointer,
- * which is shared by those graphs: it is held in memory, so it lasts as long as the process does.
+ * which is shared by those graphs: it is held in memory, so it lasts as long as the process does. The
+ * platform's session list and history views read from it too.
  */
 public class App extends RunnableApp {
 
@@ -49,6 +51,7 @@ public class App extends RunnableApp {
 
   public App(String name) {
     super(name);
+    sessionQuery(new CheckpointSessionQuery(checkpointer));
   }
 
   /**
@@ -82,9 +85,13 @@ public class App extends RunnableApp {
 
   /**
    * Compiles a graph with this app's checkpointer. A conversation's checkpoints are kept when a run
-   * ends, so the next turn of the same session continues from them.
+   * ends, so the next turn of the same session continues from them. While an execution is running,
+   * the nodes the graph runs are reported to the orchestration engine for the platform's traces.
    */
   public <S extends AgentState> CompiledGraph<S> compile(StateGraph<S> graph) throws GraphStateException {
+    if (ExecutionScope.isActive()) {
+      graph.addWrapCallNodeHook(new NodeReporter<>(ExecutionScope.current().nodes()));
+    }
     return graph.compile(CompileConfig.builder().checkpointSaver(checkpointer).releaseThread(false).build());
   }
 

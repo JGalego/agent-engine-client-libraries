@@ -10,6 +10,7 @@ import com.mongodb.agentengine.sdk.Json;
 import com.mongodb.agentengine.sdk.LLMResponse;
 import com.mongodb.agentengine.sdk.LLMToolSchema;
 import com.mongodb.agentengine.sdk.Message;
+import com.mongodb.agentengine.sdk.SuspendException;
 import com.mongodb.agentengine.sdk.ToolDefinition;
 import java.time.Duration;
 import java.util.List;
@@ -36,6 +37,9 @@ class SecureExecutionTest {
     }).remote(false).redactFields(List.of("secret")).build());
     app.tool(ToolDefinition.builder("failing_tool", "Fails", Map.of(), args -> {
       throw new IllegalStateException("disk full");
+    }).remote(false).build());
+    app.tool(ToolDefinition.builder("suspending_tool", "Asks a human", Map.of(), args -> {
+      throw new SuspendException("awaiting_human_review", Map.of("claim", "C-1"));
     }).remote(false).build());
     app.tool(ToolDefinition.builder("remote_tool", "Runs in the tool server", Map.of(), args -> {
       throw new AssertionError("a remote tool must never run in the agent runtime");
@@ -120,6 +124,37 @@ class SecureExecutionTest {
     oe.reply(200, "{\"proceed\":true,\"status\":\"interrupted\"}");
 
     assertEquals(json("{\"interrupted\":true}"), execution.callTool("remote_tool", Map.of(), null));
+  }
+
+  @Test
+  void aSuspendingRemoteToolSuspendsTheExecution() {
+    String marker = "{\"suspend_reason\":\"awaiting_human_review\",\"suspend_context\":{\"claim\":\"C-1\"},\"__suspend__\":true}";
+    oe.reply(200, Json.mapper().createObjectNode().put("proceed", true).put("status", "suspend").put("result", marker).toString());
+
+    var suspension = assertThrows(SuspendException.class, () -> execution.callTool("remote_tool", Map.of(), null));
+
+    assertEquals("awaiting_human_review", suspension.reason());
+    assertEquals(Map.of("claim", "C-1"), suspension.context());
+  }
+
+  @Test
+  void aSuspendingLocalToolIsReportedToTheOeAndSuspendsTheExecution() throws Exception {
+    oe.reply(200, "{\"proceed\":true,\"route_to\":\"callback\"}").reply(200, "{}");
+
+    var suspension = assertThrows(SuspendException.class, () -> execution.callTool("suspending_tool", Map.of(), "call-1"));
+
+    assertEquals("awaiting_human_review", suspension.reason());
+    JsonNode reported = oe.requests().get(1).json();
+    assertEquals("/tool/result", oe.requests().get(1).path());
+    assertEquals("suspend", reported.get("status").asText());
+    assertEquals("awaiting_human_review", json(reported.get("result").asText()).get("suspend_reason").asText());
+  }
+
+  @Test
+  void aSuspensionWithoutAReasonIsAToolFailure() {
+    oe.reply(200, "{\"proceed\":true,\"status\":\"suspend\",\"result\":\"{}\"}");
+
+    assertThrows(ToolExecutionException.class, () -> execution.callTool("remote_tool", Map.of(), null));
   }
 
   @Test
@@ -213,6 +248,17 @@ class SecureExecutionTest {
     assertEquals("lookup", arguments.get("tools").get(0).get("name").asText());
     assertEquals("hi", arguments.get("messages").get(0).get("content").asText());
     assertEquals("/tool/stream/exec-1/1", oe.requests().get(1).path());
+  }
+
+  @Test
+  void streamedTextIsHandedToTheTextSinkAsItArrives() {
+    routeToRelay(STREAM);
+    List<String> seen = new java.util.ArrayList<>();
+    execution.onText(seen::add);
+
+    execution.invokeLlm("main", "m", HELLO, List.of(), null, Map.of());
+
+    assertEquals(List.of("Hel", "lo"), seen);
   }
 
   @Test

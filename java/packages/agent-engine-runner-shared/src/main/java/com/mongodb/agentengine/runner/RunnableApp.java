@@ -34,9 +34,20 @@ public class RunnableApp extends BaseApp {
   private final List<ToolDefinition> tools = new CopyOnWriteArrayList<>();
   private final Map<String, RegisteredLlm> llms = new ConcurrentHashMap<>();
   private volatile Supplier<BaseAgent> agentBuilder;
+  private volatile SessionQuery sessionQuery;
 
   public RunnableApp(String name) {
     super(name);
+  }
+
+  /** Sets where the runtime reads session history from; without one, session queries answer 501. */
+  public void sessionQuery(SessionQuery query) {
+    this.sessionQuery = query;
+  }
+
+  /** The configured session history source, if any. */
+  public Optional<SessionQuery> sessionQuery() {
+    return Optional.ofNullable(sessionQuery);
   }
 
   /** Builds the agent for one execution. */

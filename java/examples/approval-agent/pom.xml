@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.mongodb.agentengine</groupId>
+    <artifactId>agent-engine-sdk-parent</artifactId>
+    <version>0.11.9</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>approval-agent</artifactId>
+  <name>Approval Agent</name>
+  <description>A Java agent that pauses for human approval</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.mongodb.agentengine</groupId>
+      <artifactId>agent-engine-runner-shared</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <executions>
+          <execution>
+            <!-- The runtime classpath, copied next to the agent jar for the container image. -->
+            <id>copy-runtime-classpath</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/lib</outputDirectory>
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

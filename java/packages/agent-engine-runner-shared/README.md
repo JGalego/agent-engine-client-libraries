@@ -20,8 +20,11 @@ This package is a work in progress. It currently covers:
 | Tool calls through the OE: local tools (`/tool/execute`, `/tool/result`) and remote tools (the OE runs them on the tool server) | done |
 | LLM calls through the OE, streamed from the tool server and folded into a response | done |
 | Tool server (port 8002): `/health`, `/`, `/tools`, `/execute`, `/invoke_llm`, `/invoke_llm/stream` | done |
-| Node execution logs, `/stream/chunk` custom output, session queries (`/query/sessions`) | planned |
-| Suspend and resume, durable workflow (gRPC), drain, A2A, guardrail checks | planned |
+| Streamed text: LLM tokens are forwarded to the OE as they arrive (`/stream/chunk`) | done |
+| Node execution logs (`/node/execution`) for frameworks that report nodes | done |
+| Session history: `/query/sessions` and `/query/sessions/{id}/messages`, from a `SessionQuery` the app sets | done |
+| Suspend and resume (human in the loop): throw `SuspendException`, read the decision from `RequestContext.resumeData()` | done |
+| Custom stream output, durable workflow (gRPC), drain and per-call interrupt, A2A, guardrail checks | planned |
 
 ## How an agent plugs in
 

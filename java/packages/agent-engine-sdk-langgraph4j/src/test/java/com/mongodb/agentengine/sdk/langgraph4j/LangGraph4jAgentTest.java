@@ -74,6 +74,67 @@ class LangGraph4jAgentTest {
     return ExecutionScope.call(execution, () -> agent.execute(ctx, message(text)).response().asText());
   }
 
+  // --- node reporting -------------------------------------------------------------------------
+
+  @Test
+  void theGraphsNodesAreReportedWhileAnExecutionRuns() throws Exception {
+    model.answer("Hello there");
+    List<String> events = new java.util.concurrent.CopyOnWriteArrayList<>();
+    var callback = new com.mongodb.agentengine.sdk.BaseExecutionCallback() {
+      @Override
+      public void onNodeStart(String node, Map<String, Object> inputs, com.mongodb.agentengine.sdk.NodeOptions options) {
+        events.add("start:" + node);
+      }
+
+      @Override
+      public void onNodeEnd(String node, Map<String, Object> outputs, com.mongodb.agentengine.sdk.NodeOptions options) {
+        events.add("end:" + node);
+      }
+    };
+    SecureExecution execution = new SecureExecution(app, new OeClient(oe.url(), Duration.ofSeconds(5)), "exec-1", Map.of()).onNodes(callback);
+
+    ExecutionScope.call(execution, () -> agent().execute(ctx("s1", "w1"), message("hi")));
+
+    assertTrue(events.contains("start:agent"), events.toString());
+    assertTrue(events.contains("end:agent"), events.toString());
+    assertTrue(events.indexOf("start:agent") < events.indexOf("end:agent"));
+  }
+
+  // --- session history -------------------------------------------------------------------------
+
+  @Test
+  void theAppServesAConversationBackAsSessionHistory() throws Exception {
+    model.callTool("call-1", "get_current_date", "{}").answer("It is October 15, 2026.");
+    oe.reply(200, "{\"proceed\":true,\"status\":\"success\",\"result\":\"2026-10-15\"}");
+    turn(agent(), ctx("s1", "w1"), "what is the date?");
+    var query = app.sessionQuery().orElseThrow();
+
+    var messages = query.messages("s1", "w1").messages();
+
+    assertEquals(List.of("user", "assistant", "tool", "assistant"), messages.stream().map(m -> m.role()).toList());
+    assertEquals("what is the date?", messages.get(0).content());
+    assertEquals("get_current_date", messages.get(1).toolCalls().get(0).name());
+    assertEquals("call-1", messages.get(2).toolCallId());
+    assertEquals("get_current_date", messages.get(2).name());
+    assertEquals("It is October 15, 2026.", messages.get(3).content());
+    assertEquals("s1", messages.get(0).sessionId());
+
+    var summary = query.summaries(List.of("s1", "unknown"), "w1").sessions();
+    assertEquals(1, summary.size(), "a session without state is left out");
+    assertEquals(4, summary.get(0).messageCount());
+    assertEquals("what is the date?", summary.get(0).firstMessagePreview());
+  }
+
+  @Test
+  void historyIsScopedToTheWorkspace() throws Exception {
+    model.answer("hi");
+    turn(agent(), ctx("s1", "w1"), "hello");
+    var query = app.sessionQuery().orElseThrow();
+
+    assertTrue(query.messages("s1", "other-workspace").messages().isEmpty());
+    assertTrue(query.summaries(List.of("s1"), "other-workspace").sessions().isEmpty());
+  }
+
   // --- a turn ---------------------------------------------------------------------------------
 
   @Test

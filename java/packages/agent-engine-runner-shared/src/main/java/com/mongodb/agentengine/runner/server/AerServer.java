@@ -4,11 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mongodb.agentengine.runner.ExecutionScope;
+import com.mongodb.agentengine.runner.NodeExecutionLogger;
 import com.mongodb.agentengine.runner.OeClient;
 import com.mongodb.agentengine.runner.RunnableApp;
 import com.mongodb.agentengine.runner.RunnerConfig;
 import com.mongodb.agentengine.runner.RunnerMode;
 import com.mongodb.agentengine.runner.SecureExecution;
+import com.mongodb.agentengine.runner.SessionQuery;
+import com.mongodb.agentengine.runner.StreamChunks;
 import com.mongodb.agentengine.runner.models.AerExecuteResponse;
 import com.mongodb.agentengine.runner.models.ExecuteRequest;
 import com.mongodb.agentengine.runner.models.ExecutorCallback;
@@ -16,9 +19,13 @@ import com.mongodb.agentengine.sdk.AgentInput;
 import com.mongodb.agentengine.sdk.AgentOutput;
 import com.mongodb.agentengine.sdk.BaseAgent;
 import com.mongodb.agentengine.sdk.RequestContext;
+import com.mongodb.agentengine.sdk.SessionMessagesResponse;
+import com.mongodb.agentengine.sdk.SessionsSummaryResponse;
+import com.mongodb.agentengine.sdk.SuspendException;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -35,6 +42,8 @@ public final class AerServer extends ComponentServer {
   private static final Duration OE_TIMEOUT = Duration.ofSeconds(30);
   private static final int CALLBACK_ATTEMPTS = 3;
   private static final int REGISTRATION_ATTEMPTS = 5;
+  // The platform's session list pages at 50; this leaves room for batched enrichment.
+  private static final int MAX_QUERIED_SESSIONS = 200;
 
   private final RunnerConfig config;
   private final Map<String, Boolean> features;
@@ -49,9 +58,8 @@ public final class AerServer extends ComponentServer {
     this.oe = new OeClient(config.oeUrl(), OE_TIMEOUT);
     http().route("POST", "/execute", request -> JsonHttpServer.Reply.ok(execute(request.json(ExecuteRequest.class))));
     http().route("POST", "/warm-up", request -> JsonHttpServer.Reply.noContent());
-    http().route("GET", "/query/sessions", request -> {
-      throw new HttpError(501, "session queries are not supported by this framework");
-    });
+    http().route("GET", "/query/sessions", request -> JsonHttpServer.Reply.ok(querySummaries(request.queryValues("session_ids"))));
+    http().route("GET", "/query/sessions/{session_id}/messages", request -> JsonHttpServer.Reply.ok(queryMessages(request.pathParams().get("session_id"))));
   }
 
   @Override
@@ -114,20 +122,50 @@ public final class AerServer extends ComponentServer {
 
     // The callback goes to the OE this runtime was configured with, never to a URL the request names:
     // a caller-chosen URL would let a request forge tool results and approval decisions.
-    try {
-      SecureExecution secure = new SecureExecution(app(), oe, request.executionId(), request.customHeaders());
+    try (StreamChunks chunks = new StreamChunks(oe, request.executionId());
+        NodeExecutionLogger nodes = new NodeExecutionLogger(oe, request.executionId(), context.sessionId(), request.userId(), request.orgId(), request.projectId())) {
+      SecureExecution secure = new SecureExecution(app(), oe, request.executionId(), request.customHeaders()).onText(chunks::text).onNodes(nodes);
       AgentOutput output = ExecutionScope.call(secure, () -> {
         BaseAgent agent = app().buildAgent();
         return agent.execute(context, new AgentInput(payload));
       });
+      // Deliver text and node events before the callback that settles the execution.
+      chunks.close();
+      nodes.close();
       JsonNode result = output.response();
       deliver(ExecutorCallback.completed(request.executionId(), request.suspendGeneration(), result));
       return AerExecuteResponse.completed(result.isTextual() ? result.asText() : result.toString());
+    } catch (SuspendException e) {
+      LOG.log(System.Logger.Level.INFO, "Execution {0} suspended: {1}", request.executionId(), e.reason());
+      deliver(ExecutorCallback.suspended(request.executionId(), request.suspendGeneration(), e.reason(), e.context(), e.metadata()));
+      return AerExecuteResponse.suspended(e.reason());
     } catch (Exception e) {
       LOG.log(System.Logger.Level.ERROR, "Execution " + request.executionId() + " failed", e);
       deliver(ExecutorCallback.failed(request.executionId(), request.suspendGeneration(), String.valueOf(e.getMessage())));
       throw new HttpError(500, "Execution failed: " + e.getMessage());
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Session queries
+  // ---------------------------------------------------------------------------
+
+  private SessionsSummaryResponse querySummaries(List<String> sessionIds) {
+    if (sessionIds.size() > MAX_QUERIED_SESSIONS) {
+      throw new HttpError(422, "At most " + MAX_QUERIED_SESSIONS + " session_ids may be queried at once");
+    }
+    if (sessionIds.isEmpty()) {
+      return new SessionsSummaryResponse(List.of());
+    }
+    return sessionQuery().summaries(sessionIds, config.workspaceId());
+  }
+
+  private SessionMessagesResponse queryMessages(String sessionId) {
+    return sessionQuery().messages(sessionId, config.workspaceId());
+  }
+
+  private SessionQuery sessionQuery() {
+    return app().sessionQuery().orElseThrow(() -> new HttpError(501, "session queries are not supported by this framework"));
   }
 
   /**

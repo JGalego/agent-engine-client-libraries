@@ -12,10 +12,11 @@ Use `agent-engine-sdk-memory` if your application reads or writes project memory
 | [`agent-engine-sdk-langgraph4j`](packages/agent-engine-sdk-langgraph4j) | LangGraph4j framework SDK: run a graph as a platform agent |
 | [`agent-engine-sdk-langchain4j`](packages/agent-engine-sdk-langchain4j) | LangChain4j adapters (chat model as `BaseLLM` and back, message and tool translation) |
 | [`agent-engine-sdk`](packages/agent-engine-sdk) | Framework-neutral core protocols, models, and HTTP clients |
-| [`agent-engine-runner-shared`](packages/agent-engine-runner-shared) | Runner runtime that serves agents to the Orchestration Engine (in progress) |
+| [`agent-engine-runner-shared`](packages/agent-engine-runner-shared) | Runner runtime that serves agents to the Orchestration Engine (partial; see its README) |
 
-See the [`hello-agent`](examples/hello-agent), [`assistant-agent`](examples/assistant-agent) and
-[`graph-agent`](examples/graph-agent) examples for running a Java agent in the local stack.
+See the [`hello-agent`](examples/hello-agent), [`assistant-agent`](examples/assistant-agent),
+[`graph-agent`](examples/graph-agent) and [`approval-agent`](examples/approval-agent) examples for running
+a Java agent in the local stack.
 
 ## Install
 
@@ -25,6 +26,13 @@ See the [`hello-agent`](examples/hello-agent), [`assistant-agent`](examples/assi
   <artifactId>agent-engine-sdk-memory</artifactId>
   <version>0.11.9</version>
 </dependency>
+```
+
+To build from source instead, run the install script from a checkout, or pipe it from the branch you
+want. It needs JDK 17+, Maven and git:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JGalego/agent-engine-client-libraries/<branch>/scripts/install-java-sdk.sh | bash -s -- --branch <branch>
 ```
 
 ## Development

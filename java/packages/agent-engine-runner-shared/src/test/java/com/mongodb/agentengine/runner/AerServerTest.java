@@ -13,7 +13,12 @@ import com.mongodb.agentengine.sdk.AgentOutput;
 import com.mongodb.agentengine.sdk.BaseAgent;
 import com.mongodb.agentengine.sdk.Json;
 import com.mongodb.agentengine.sdk.RequestContext;
+import com.mongodb.agentengine.sdk.SessionMessage;
+import com.mongodb.agentengine.sdk.SessionMessagesResponse;
+import com.mongodb.agentengine.sdk.SessionSummary;
+import com.mongodb.agentengine.sdk.SessionsSummaryResponse;
 import com.mongodb.agentengine.sdk.StreamEvent;
+import com.mongodb.agentengine.sdk.SuspendException;
 import com.mongodb.agentengine.sdk.ToolDefinition;
 import java.util.List;
 import java.util.Map;
@@ -176,11 +181,97 @@ class AerServerTest {
   }
 
   @Test
-  void warmUpAnswersNoContentAndSessionQueriesAreNotSupported() throws Exception {
+  void warmUpAnswersNoContent() throws Exception {
     start(Map.of());
 
     assertEquals(204, TestHttp.post(server.port(), "/warm-up", "").status());
-    assertEquals(501, TestHttp.get(server.port(), "/query/sessions").status());
+  }
+
+  // --- session queries ------------------------------------------------------------------------
+
+  @Test
+  void sessionQueriesAreNotSupportedWithoutAQuerySource() throws Exception {
+    start(Map.of());
+
+    assertEquals(501, TestHttp.get(server.port(), "/query/sessions?session_ids=s1").status());
+    assertEquals(501, TestHttp.get(server.port(), "/query/sessions/s1/messages").status());
+  }
+
+  @Test
+  void anEmptySessionListNeedsNoQuerySource() throws Exception {
+    start(Map.of());
+
+    assertEquals(json("{\"sessions\":[]}"), json(TestHttp.get(server.port(), "/query/sessions").body()));
+  }
+
+  @Test
+  void summariesAreReadForTheRequestedSessionsInTheConfiguredWorkspace() throws Exception {
+    AtomicReference<List<String>> asked = new AtomicReference<>();
+    AtomicReference<String> workspace = new AtomicReference<>();
+    app.sessionQuery(new SessionQuery() {
+      @Override
+      public SessionsSummaryResponse summaries(List<String> sessionIds, String workspaceId) {
+        asked.set(sessionIds);
+        workspace.set(workspaceId);
+        return new SessionsSummaryResponse(List.of(new SessionSummary("s1", "", "", 2, "hello")));
+      }
+
+      @Override
+      public SessionMessagesResponse messages(String sessionId, String workspaceId) {
+        throw new AssertionError();
+      }
+    });
+    start(Map.of());
+
+    var response = TestHttp.get(server.port(), "/query/sessions?session_ids=s1&session_ids=s%202");
+
+    assertEquals(200, response.status());
+    assertEquals(List.of("s1", "s 2"), asked.get());
+    assertEquals("ws1", workspace.get());
+    assertEquals(json("{\"sessions\":[{\"session_id\":\"s1\",\"last_activity\":\"\",\"created_at\":\"\",\"message_count\":2,\"first_message_preview\":\"hello\"}]}"), json(response.body()));
+  }
+
+  @Test
+  void tooManySessionsInOneQueryAreRejected() throws Exception {
+    app.sessionQuery(new SessionQuery() {
+      @Override
+      public SessionsSummaryResponse summaries(List<String> sessionIds, String workspaceId) {
+        throw new AssertionError();
+      }
+
+      @Override
+      public SessionMessagesResponse messages(String sessionId, String workspaceId) {
+        throw new AssertionError();
+      }
+    });
+    start(Map.of());
+    String ids = String.join("&", java.util.Collections.nCopies(201, "session_ids=s"));
+
+    assertEquals(422, TestHttp.get(server.port(), "/query/sessions?" + ids).status());
+  }
+
+  @Test
+  void messagesAreReadForTheSessionNamedInThePath() throws Exception {
+    AtomicReference<String> asked = new AtomicReference<>();
+    app.sessionQuery(new SessionQuery() {
+      @Override
+      public SessionsSummaryResponse summaries(List<String> sessionIds, String workspaceId) {
+        throw new AssertionError();
+      }
+
+      @Override
+      public SessionMessagesResponse messages(String sessionId, String workspaceId) {
+        asked.set(sessionId);
+        return new SessionMessagesResponse(List.of(new SessionMessage("m1", "user", "hi", "", sessionId, null, null, null, null)));
+      }
+    });
+    start(Map.of());
+
+    var response = TestHttp.get(server.port(), "/query/sessions/a%2Fb/messages");
+
+    assertEquals(200, response.status());
+    assertEquals("a/b", asked.get());
+    assertEquals("hi", json(response.body()).get("messages").get(0).get("content").asText());
   }
 
   @Test
@@ -206,6 +297,22 @@ class AerServerTest {
     var callback = oe.requests().get(1);
     assertEquals("/executor/callback", callback.path());
     assertEquals(json("{\"execution_id\":\"e1\",\"status\":\"COMPLETED\",\"result\":\"echo: hi\"}"), callback.json());
+  }
+
+  @Test
+  void aSuspendedAgentIsReportedAsSuspendedNotFailed() throws Exception {
+    agent.failure = new SuspendException("awaiting_human_review", Map.of("claim", "C-1"), Map.of("step", 2));
+    start(Map.of());
+    oe.reply(200, "{}");
+
+    var response = execute("{\"execution_id\":\"e1\",\"message\":\"hi\",\"platform_api_url\":\"x\",\"suspend_generation\":4}");
+
+    assertEquals(200, response.status());
+    assertEquals(json("{\"status\":\"suspended\",\"suspend_reason\":\"awaiting_human_review\"}"), json(response.body()));
+    assertEquals(
+        json("{\"execution_id\":\"e1\",\"status\":\"SUSPENDED\",\"suspend_generation\":4,\"suspend_reason\":\"awaiting_human_review\","
+            + "\"suspend_context\":{\"claim\":\"C-1\"},\"metadata\":{\"step\":2}}"),
+        oe.requests().get(1).json());
   }
 
   @Test

@@ -34,6 +34,7 @@
     <module>examples/hello-agent</module>
     <module>examples/assistant-agent</module>
     <module>examples/graph-agent</module>
+    <module>examples/approval-agent</module>
   </modules>
 
   <properties>

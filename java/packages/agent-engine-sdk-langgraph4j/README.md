@@ -63,6 +63,9 @@ remembers the earlier ones.
 The checkpointer is in memory. A session keeps its sandbox for as long as it is active, so the
 conversation lasts as long as that process does. A durable store is planned.
 
+The platform's session list and history views are served from the same checkpointer, and the nodes
+the graph runs appear in the execution trace.
+
 ## Threads
 
 LangGraph4j runs graph nodes on its own worker threads. The SDK runs them on an executor that carries
@@ -71,8 +74,9 @@ execution. Work you start on your own threads needs `ExecutionScope.wrap`.
 
 ## Not yet supported
 
-Human-in-the-loop interrupts and resume, a durable checkpointer, and session-history queries are not
-implemented. See the [runner README](../agent-engine-runner-shared/README.md) for what the runtime
+Graph interrupts that suspend a node and resume it from its checkpoint, and a durable checkpointer,
+are not implemented. An agent can still suspend for a human decision by throwing `SuspendException`
+from a tool. See the [runner README](../agent-engine-runner-shared/README.md) for what the runtime
 covers.
 
 ## Development
