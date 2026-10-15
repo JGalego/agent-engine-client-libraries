@@ -1,0 +1,3 @@
+name: embedding-zoo
+entrypoint: com.example.embeddingzoo.EmbeddingZooApp:app
+framework: langchain4j
