@@ -52,7 +52,11 @@ NAME="$(yaml_value name)"
 [ -n "$NAME" ] || die "agent.yaml has no name"
 SAFE_NAME="$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9\n' '-' | sed 's/^-*//; s/-*$//' | tr 'A-Z' 'a-z')"
 
-rm -rf "$OUT"
+# Start clean, but keep what the CLI wrote here (workspace binding in .agentengine, local .env) so
+# re-packaging doesn't unlink the directory from its workspace.
+if [ -d "$OUT" ]; then
+  find "$OUT" -mindepth 1 -maxdepth 1 ! -name .agentengine ! -name .env -exec rm -rf {} +
+fi
 mkdir -p "$OUT/java/lib"
 cp -R "$SHIM/java_shim" "$OUT/java_shim"
 find "$OUT/java_shim" -name __pycache__ -prune -exec rm -rf {} +
