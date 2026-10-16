@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en" class="theme-mongodb">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Java vs. MongoDB</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;600&family=Caveat:wght@700&display=swap">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/github.css">
+  <style>
+    /* Two themes. Every colour on a slide comes from these variables, so switching the class on
+       <html> restyles the whole deck, section dividers included. */
+    html.theme-mongodb {
+      --bg: #FFFFFF;
+      --text: #001E2B;          /* MongoDB slate */
+      --heading: #001E2B;
+      --accent: #00684A;        /* forest green */
+      --accent-soft: #E3FCF7;
+      --divider: #00684A;
+      --divider-text: #FFFFFF;
+      --divider-accent: #00ED64; /* spring green */
+      --code-bg: #F5F7F6;
+      --code-text: #001E2B;
+      --error-bg: #001E2B;
+      --error-text: #FF6F44;
+      --muted: #5C6C75;
+      --tok-keyword: #00684A; --tok-string: #B45309; --tok-number: #0B6BCB;
+      --tok-comment: #7A8B94; --tok-title: #6B3FA0; --tok-type: #0E7490;
+    }
+    html.theme-java {
+      --bg: #FFFAF5;            /* cream */
+      --text: #2B1B17;          /* espresso */
+      --heading: #2B1B17;
+      --accent: #B3261E;        /* Java red */
+      --accent-soft: #FBE9E7;
+      --divider: #8E1B14;
+      --divider-text: #FFF5EC;
+      --divider-accent: #F89820; /* coffee orange */
+      --code-bg: #F7EEE6;
+      --code-text: #2B1B17;
+      --error-bg: #2B1B17;
+      --error-text: #FFB74D;
+      --muted: #7A6A62;
+      --tok-keyword: #B3261E; --tok-string: #A15C07; --tok-number: #1F6FB2;
+      --tok-comment: #8C7B72; --tok-title: #7B3FA0; --tok-type: #0F766E;
+    }
+
+    html:root {   /* outranks the reveal theme's :root */
+      --r-background-color: var(--bg);
+      --r-main-color: var(--text);
+      --r-heading-color: var(--heading);
+      --r-link-color: var(--accent);
+      --r-link-color-hover: var(--accent);
+      --r-selection-background-color: var(--accent-soft);
+      --r-main-font: "Inter", system-ui, sans-serif;
+      --r-heading-font: "Inter", system-ui, sans-serif;
+      --r-code-font: "JetBrains Mono", ui-monospace, monospace;
+      --r-heading-text-transform: none;
+      --r-main-font-size: 34px;
+    }
+    body, .reveal-viewport { background: var(--bg); transition: background 0.4s; }
+
+    /* No orphans: spread a wrapped paragraph over its lines evenly. */
+    .reveal p, .reveal li, .reveal h1, .reveal h2, .reveal h3, .reveal h4 { text-wrap: balance; }
+    .reveal .letter p { text-wrap: pretty; }
+    /* PDF of final states: a fragment that fades out on click is gone in the final state. */
+    html.print-final .reveal .slides section .fragment.fade-out { opacity: 0 !important; visibility: hidden !important; }
+    .reveal h1, .reveal h2, .reveal h3 { font-weight: 800; letter-spacing: -0.01em; }
+    .reveal h1 { color: var(--accent); }
+    .reveal strong { color: var(--accent); }
+    .reveal .divider-title { color: var(--divider-text); }
+    .reveal .divider-title .chapter {
+      display: block; margin-bottom: 0.3em; font-size: 0.4em; font-weight: 700;
+      letter-spacing: 0.25em; text-transform: uppercase; color: var(--divider-accent);
+    }
+    .reveal .divider-title::after {
+      content: ""; display: block; width: 2.5em; height: 0.12em; margin: 0.35em auto 0;
+      background: var(--divider-accent); border-radius: 1em;
+    }
+
+    /* A word that keeps changing: "Just <tool> your way through". */
+    .reveal .rotator { display: inline-block; white-space: nowrap; vertical-align: bottom; color: var(--accent); font-weight: 700; transition: opacity 0.25s; }
+    .reveal .rotator.out { opacity: 0; }
+    /* Chat bubbles: the server's two possible answers. */
+    .bubbles { display: flex; justify-content: center; gap: 1.2em; margin-top: 0.8em; }
+    .bubble { position: relative; padding: 0.5em 0.9em; border: 2px solid var(--bubble-line, transparent); border-radius: 1.1em; font-size: 0.7em; line-height: 1.25; text-align: left; }
+    .bubble small { display: block; margin-top: 0.2em; font-size: 0.7em; opacity: 0.9; }
+    .bubble small code { font-weight: 800; font-size: 1.05em; margin-right: 0.3em; padding: 0.05em 0.4em; border-radius: 0.4em; background: rgba(255, 255, 255, 0.22); color: inherit; }
+    .bubble.no small code { background: rgba(0, 0, 0, 0.08); }
+    /* The tail is two triangles: an outline one behind a fill one, so it matches the border. */
+    .bubble::before, .bubble::after { content: ""; position: absolute; border-style: solid; border-color: transparent; border-bottom-width: 0; }
+    .bubble::before { bottom: -0.6em; left: 1.1em; border-width: 0.6em 0.6em 0; border-top-color: var(--bubble-line, transparent); }
+    .bubble::after { bottom: -0.5em; left: 1.2em; border-width: calc(0.5em + 3px) 0.5em 0; border-top-color: var(--bubble-bg); }
+    .bubble.yes { --bubble-bg: var(--accent); background: var(--bubble-bg); color: #fff; }
+    .bubble.no { --bubble-bg: var(--accent-soft); --bubble-line: var(--muted); background: var(--bubble-bg); color: var(--heading); }
+    /* A conversation between the parties of a bug. */
+    .chat { display: flex; flex-direction: column; gap: 0.9em; margin-top: 0.6em; }
+    .chat .bubble { max-width: 80%; }
+    .chat .bubble.l { align-self: flex-start; }
+    .chat .bubble.r { align-self: flex-end; }
+    .chat .bubble.r::before { left: auto; right: 1.1em; }
+    .chat .bubble.r::after { left: auto; right: 1.2em; }
+    .bubble strong { color: inherit; }
+    .bubble.client { --bubble-bg: var(--accent-soft); --bubble-line: var(--muted); background: var(--bubble-bg); color: var(--heading); }
+    .bubble.server { --bubble-bg: var(--accent); background: var(--bubble-bg); color: #fff; }
+    .bubble.err { --bubble-bg: #D92D20; background: var(--bubble-bg); color: #fff; }
+    /* Before/after numbers. */
+    .stats { display: flex; justify-content: center; align-items: center; gap: 0.8em; margin: 0.4em 0 0.6em; }
+    .stat { font-size: 2.6em; font-weight: 800; line-height: 1; text-align: center; }
+    .stat small { display: block; margin-top: 0.3em; font-size: 0.3em; font-weight: 600; color: var(--muted); }
+    .stat.bad { color: #D92D20; }
+    .stat.good { color: var(--accent); }
+    .stats .arrow { font-size: 2em; color: var(--muted); }
+    /* A before-and-after flow of pills. */
+    .flow { display: flex; flex-wrap: nowrap; white-space: nowrap; justify-content: center; align-items: center; gap: 0.5em; margin: 1.2em 0 1.4em; }
+    .flow .pill { padding: 0.35em 0.9em; border-radius: 999px; font-weight: 700; font-size: 0.7em; background: var(--accent-soft); color: var(--heading); box-shadow: inset 0 0 0 2px var(--muted); }
+    .flow .pill.bad { background: #D92D20; color: #fff; box-shadow: none; }
+    .flow .pill.good { background: var(--accent); color: #fff; box-shadow: none; }
+    .flow > .fragment { display: flex; align-items: center; gap: 0.5em; }
+    .flow .arrow { color: var(--muted); font-size: 1em; }
+    .reveal .filename { margin: 0.6em 0 0.15em; font: 600 0.5em var(--r-code-font); color: var(--muted); text-align: left; }
+    .reveal pre { width: 100%; box-shadow: none; font-size: 0.64em; }
+    .reveal pre code {
+      max-height: 560px; padding: 0.8em; border-radius: 10px;
+      background: var(--code-bg); color: var(--code-text);
+      border-left: 4px solid var(--accent);
+    }
+    .reveal .hljs { background: var(--code-bg); }
+    /* A code-like block the highlighter leaves alone, so its lines can be fragments */
+    .plan { display: flex; flex-wrap: nowrap; white-space: nowrap; justify-content: center; align-items: center; gap: 0.35em 0.2em; margin-bottom: 1.2em; }
+    .plan .step { padding: 0.25em 0.7em; border-radius: 999px; background: var(--accent-soft); color: var(--heading); font-weight: 600; font-size: 0.75em; }
+    .plan .step.cloud { background: transparent; font-size: 1.1em; padding: 0; }
+    .plan > * { opacity: 0; }
+    .plan.run > * { animation: plan-in 0.4s ease-out forwards; animation-delay: calc(var(--i) * 0.35s + 0.3s); }
+    @keyframes plan-in { from { opacity: 0; transform: translateY(0.4em); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .plan > * { opacity: 1 !important; animation: none !important; } }
+    /* "You are here" strip: the plan from the intro, static, with the current step lit. */
+    .track { display: flex; flex-wrap: nowrap; white-space: nowrap; justify-content: center; align-items: center; gap: 0.2em; margin-bottom: 0.8em; }
+    .track .step { padding: 0.2em 0.6em; border-radius: 999px; background: var(--accent-soft); color: var(--heading); font-weight: 600; font-size: 0.55em; opacity: 0.45; }
+    .track .step.here { background: var(--accent); color: #fff; opacity: 1; }
+    .track .step.cloud { background: transparent; font-size: 0.8em; padding: 0; }
+    .track .arrow { color: var(--muted); font-size: 0.55em; opacity: 0.6; }
+    .plan .arrow { color: var(--muted); font-size: 0.75em; }
+    .reveal pre.plain {
+      display: block; padding: 0.8em; border-radius: 10px; text-align: left; line-height: 1.35;
+      background: var(--code-bg); color: var(--code-text);
+      border-left: 4px solid var(--accent);
+      font-family: var(--r-code-font); font-variant-ligatures: none;
+    }
+    .reveal pre.plain a { color: inherit; text-decoration: underline; text-underline-offset: 0.15em; font-weight: 600; }
+    .reveal pre.plain a:hover { color: var(--accent); }
+    .reveal .hljs-keyword, .reveal .hljs-literal, .reveal .hljs-meta, .reveal .hljs-built_in { color: var(--tok-keyword); font-weight: 600; }
+    .reveal .hljs-string, .reveal .hljs-regexp, .reveal .hljs-attr { color: var(--tok-string); }
+    .reveal .hljs-number, .reveal .hljs-symbol { color: var(--tok-number); }
+    .reveal .hljs-comment, .reveal .hljs-quote { color: var(--tok-comment); font-style: italic; }
+    .reveal .hljs-title, .reveal .hljs-function, .reveal .hljs-section { color: var(--tok-title); }
+    .reveal .hljs-type, .reveal .hljs-class, .reveal .hljs-variable, .reveal .hljs-params { color: var(--tok-type); }
+    .reveal .hljs-title.class_, .reveal .hljs-built_in { color: var(--tok-type); }
+    .reveal .hljs-addition { background: rgba(46, 160, 67, 0.22); color: #116329; font-weight: 600; display: inline-block; width: 100%; }
+    .reveal .hljs-deletion { background: rgba(248, 81, 73, 0.2); color: #a40e26; display: inline-block; width: 100%; }
+    .reveal .error pre code { background: var(--error-bg); color: var(--error-text); border-left-color: var(--error-text); }
+    .reveal pre code a { color: inherit; text-decoration: underline; text-underline-offset: 0.15em; font-weight: 600; }
+    .reveal pre code a:hover { color: var(--accent); }
+    .reveal .katex { font-size: 1em; color: inherit; }
+    /* A sales-pitch heckle: a red band slapped across a diagram on click. */
+    .reveal .sales-band {
+      position: absolute; left: -3%; right: -3%; top: 50%; transform: translateY(-50%) rotate(-3deg);
+      padding: 0.5em 1em; background: #D92D20; color: #fff; text-align: center;
+      font-weight: 800; font-size: 1.5em; line-height: 1.25; letter-spacing: 0.01em;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); text-transform: uppercase;
+    }
+    .reveal .sales-band .sales-line { display: block; }
+    .reveal .sales-band .sales-line + .sales-line { font-size: 0.7em; margin-top: 0.2em; }
+    .reveal .sales-band em { font-style: normal; text-decoration: underline; text-decoration-thickness: 0.1em; }
+    .reveal code { font-family: var(--r-code-font); font-variant-ligatures: none; }
+
+    .reveal table th { color: var(--accent); }
+    .reveal blockquote { background: var(--accent-soft); border-left: 4px solid var(--accent); box-shadow: none; }
+    .reveal .small { font-size: 0.6em; color: var(--muted); }
+    .title-meta { margin-top: 3.2em; }
+    .title-meta p { margin: 0.9em 0 0; }
+    .title-meta .speaker { font-size: 0.75em; }
+    .reveal .big { font-size: 2.2em; font-weight: 800; }
+    .reveal .shot {
+      border: 3px dashed var(--muted); border-radius: 12px; padding: 1.2em; color: var(--muted);
+      font-size: 0.6em; text-align: left; margin-bottom: 0.6em;
+    }
+    .reveal img { border: none; box-shadow: none; background: transparent; }
+    .reveal .strike { text-decoration: line-through; color: var(--accent); }
+    .reveal .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .reveal .progress { color: var(--accent); }
+    .reveal .controls { color: var(--accent); }
+
+    /* The bonus tenet: it pops in on the last click, overshoots, then settles with a glow. */
+    .reveal .fragment.tenet-bonus { transform: scale(0.4) rotate(-6deg); transform-origin: left center; transition: none; }
+    .reveal .fragment.tenet-bonus.visible { animation: tenet-pop 0.8s cubic-bezier(0.2, 1.7, 0.4, 1) forwards, tenet-glow 2.4s ease-in-out 0.8s infinite; }
+    @keyframes tenet-pop { from { transform: scale(0.4) rotate(-6deg); } to { transform: scale(1) rotate(0); } }
+    @keyframes tenet-glow { 0%, 100% { text-shadow: 0 0 0 transparent; } 50% { text-shadow: 0 0 18px var(--divider-accent); } }
+    @media (prefers-reduced-motion: reduce) { .reveal .fragment.tenet-bonus.visible { animation: none; transform: none; } }
+
+    /* A hand-written note on a slide: red marker, slightly tilted. */
+    .reveal .annot { position: absolute; z-index: 5; color: var(--accent); text-align: left; transform: rotate(-4deg); transform-origin: left bottom; pointer-events: none; }
+    .reveal .annot-text { font: 700 1.5em/1 "Caveat", "Segoe Print", cursive; white-space: nowrap; }
+
+    /* The toggle: a small button in the corner, also bound to the T key. */
+    #theme-toggle {
+      position: fixed; left: 16px; bottom: 16px; z-index: 50;
+      border: 1px solid var(--muted); border-radius: 999px; padding: 6px 14px;
+      background: var(--bg); color: var(--text); font: 600 14px "Inter", sans-serif;
+      cursor: pointer; opacity: 0.35; transition: opacity 0.2s;
+    }
+    #theme-toggle { display: flex; align-items: center; gap: 8px; }
+    #theme-toggle img { height: 20px; width: auto; }
+    #theme-toggle:hover, #theme-toggle:focus-visible { opacity: 1; }
+    @media print { #theme-toggle { display: none; } }
+    /* Title slide toy: a click drops a leaf or a mug that falls and bounces off the text. */
+    #drops { position: fixed; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
+    #drops img { position: absolute; left: 0; top: 0; width: 56px; height: 56px; will-change: transform; }
+    @media print { #drops { display: none; } }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+      <section data-markdown="slides.md"
+               data-separator="^\n---\n$"
+               data-separator-vertical="^\n--\n$"
+               data-separator-notes="^Note:"></section>
+    </div>
+  </div>
+  <div id="drops" aria-hidden="true"></div>
+  <button id="theme-toggle" type="button" aria-label="Switch theme (T)" title="Switch theme (T)"></button>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/markdown/markdown.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/math/math.js"></script>
+  <script>
+    const THEMES = { mongodb: ["MongoDB", "img/mongodb-icon.svg"], java: ["Java", "img/java.svg"] };
+    const button = document.getElementById("theme-toggle");
+
+    function applyTheme(name) {
+      const root = document.documentElement;
+      Object.keys(THEMES).forEach((t) => root.classList.toggle("theme-" + t, t === name));
+      button.innerHTML = `<img src="${THEMES[name][1]}" alt=""><span>${THEMES[name][0]}</span>`;
+      try { localStorage.setItem("stowaway-theme", name); } catch (e) { /* private window */ }
+    }
+
+    function nextTheme() {
+      const names = Object.keys(THEMES);
+      const current = names.find((t) => document.documentElement.classList.contains("theme-" + t));
+      applyTheme(names[(names.indexOf(current) + 1) % names.length]);
+    }
+
+    // ?theme=java in the URL wins, then the last choice, then MongoDB.
+    let initial = new URLSearchParams(location.search).get("theme");
+    if (!THEMES[initial]) {
+      try { initial = localStorage.getItem("stowaway-theme"); } catch (e) { initial = null; }
+    }
+    applyTheme(THEMES[initial] ? initial : "mongodb");
+    button.addEventListener("click", () => { nextTheme(); button.blur(); });
+
+    // Markdown is not parsed inside fenced code, so turn [text](url) into a link
+    // after highlighting. Only text nodes are touched, so token spans stay intact.
+    // Centre a group of SVG shapes on the x coordinate in data-center-x, whatever the font renders.
+    function centerSvgGroups() {
+      document.querySelectorAll("g[data-center-x]").forEach((g) => {
+        try {
+          g.removeAttribute("transform");
+          const box = g.getBBox();
+          if (box.width) {
+            g.setAttribute("transform", "translate(" + (Number(g.dataset.centerX) - (box.x + box.width / 2)) + " 0)");
+          }
+        } catch (e) { /* a hidden slide has no box yet */ }
+      });
+    }
+    function linkifyCode() {
+      const re = /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g;
+      document.querySelectorAll(".reveal pre code").forEach((code) => {
+        const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach((node) => {
+          if (node.parentElement.closest("a") || !re.test(node.data)) return;
+          re.lastIndex = 0;
+          const frag = document.createDocumentFragment();
+          let last = 0, m;
+          while ((m = re.exec(node.data))) {
+            frag.append(node.data.slice(last, m.index));
+            const a = document.createElement("a");
+            a.href = m[2]; a.target = "_blank"; a.rel = "noopener";
+            a.textContent = m[1];
+            frag.append(a);
+            last = re.lastIndex;
+          }
+          frag.append(node.data.slice(last));
+          node.replaceWith(frag);
+        });
+      });
+    }
+
+    if (/[?&]pdfSeparateFragments=false/.test(location.search)) document.documentElement.classList.add("print-final");
+    Reveal.initialize({
+      hash: true,
+      slideNumber: "c/t",
+      transition: "fade",
+      // KaTeX; $$...$$ is inline here (the speaker line), \[...\] stays display.
+      katex: {
+        delimiters: [
+          { left: "$$", right: "$$", display: false },
+          { left: "\\(", right: "\\)", display: false },
+          { left: "\\[", right: "\\]", display: true },
+        ],
+      },
+      plugins: [RevealMarkdown, RevealHighlight, RevealNotes, RevealMath.KaTeX],
+    });
+    // Cycle every .rotator through its data-words, ending each lap on the last word.
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setInterval(() => {
+        document.querySelectorAll(".rotator").forEach((el) => {
+          if (!el.offsetParent) return;           // slide not on screen
+          const words = el.dataset.words.split("|");
+          const next = (words.indexOf(el.textContent) + 1) % words.length;
+          el.classList.add("out");
+          setTimeout(() => { el.textContent = words[next]; el.classList.remove("out"); }, 250);
+        });
+      }, 1400);
+    }
+
+    // An <img data-placeholder> that fails to load (a screenshot not captured yet) becomes a dashed box.
+    function placeholderFor(img) {
+      const box = document.createElement("div");
+      box.className = "shot";
+      box.textContent = img.alt;
+      img.replaceWith(box);
+    }
+    document.addEventListener("error", (e) => {
+      if (e.target.tagName === "IMG" && "placeholder" in e.target.dataset) placeholderFor(e.target);
+    }, true);
+    Reveal.on("ready", () => document.querySelectorAll("img[data-placeholder]").forEach((img) => {
+      if (img.complete && img.naturalWidth === 0) placeholderFor(img);
+    }));
+
+    Reveal.on("ready", linkifyCode);
+    Reveal.on("ready", centerSvgGroups);
+    Reveal.on("slidechanged", centerSvgGroups);
+
+    // Restart the build-up each time its slide is entered, from either direction
+    function restartPlan(event) {
+      document.querySelectorAll(".plan.run").forEach((el) => el.classList.remove("run"));
+      const plan = event.currentSlide && event.currentSlide.querySelector(".plan");
+      if (plan) {
+        void plan.offsetWidth;
+        plan.classList.add("run");
+      }
+    }
+    Reveal.on("ready", restartPlan);
+    Reveal.on("slidechanged", restartPlan);
+
+    // Falling things. Gravity, air drag, and an elastic bounce off the floor and the
+    // text blocks of the title slide. The leaf and the mug alternate. Move the mouse through one to
+    // push it, or click on one to knock it up and away.
+    (function () {
+      const layer = document.getElementById("drops");
+      const IMAGES = ["img/mongodb-icon.svg", "img/java.svg"];
+      const ODDBALL = "data:image/svg+xml," + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><text x="32" y="50" font-size="52" text-anchor="middle">🐍</text></svg>');
+      const ODDBALL_CHANCE = 0.12;
+      const G = 1800, RESTITUTION = 0.62, DRAG = 0.15, R = 28, NUDGE = 0.1, NUDGE_MAX = 450;
+      let items = [], last = 0, running = false, next = 0;
+
+      function obstacles() {
+        const slide = Reveal.getCurrentSlide();
+        if (!slide) return [];
+        return [...slide.querySelectorAll("h1, h2, h3, p, pre")].map((e) => e.getBoundingClientRect())
+          .filter((r) => r.width > 0 && r.height > 0);
+      }
+
+      function spawn(x, y) {
+        const img = document.createElement("img");
+        // Now and then the Python shim crashes the party
+        img.src = Math.random() < ODDBALL_CHANCE ? ODDBALL : IMAGES[next++ % IMAGES.length];
+        img.alt = "";
+        layer.appendChild(img);
+        items.push({ img, x, y, vx: (Math.random() - 0.5) * 360, vy: -200 });
+        if (!running) { running = true; last = performance.now(); requestAnimationFrame(step); }
+      }
+
+      function step(now) {
+        const dt = Math.min((now - last) / 1000, 0.033); last = now;
+        const W = innerWidth, H = innerHeight, rects = obstacles();
+        for (const o of items) {
+          o.vy += G * dt;
+          o.vx -= o.vx * DRAG * dt; o.vy -= o.vy * DRAG * dt;
+          o.x += o.vx * dt; o.y += o.vy * dt;
+          if (o.y > H - R) { o.y = H - R; o.vy = -Math.abs(o.vy) * RESTITUTION; o.vx *= 0.9; }
+          for (const r of rects) {
+            // nearest point on the rectangle to the centre; if closer than R, push out along the normal
+            const cx = Math.max(r.left, Math.min(o.x, r.right)), cy = Math.max(r.top, Math.min(o.y, r.bottom));
+            let dx = o.x - cx, dy = o.y - cy, d = Math.hypot(dx, dy);
+            if (d >= R) continue;
+            if (d === 0) { dx = 0; dy = -1; d = 1; }   // centre inside the box: go up
+            const nx = dx / d, ny = dy / d, vn = o.vx * nx + o.vy * ny;
+            o.x = cx + nx * R; o.y = cy + ny * R;
+            if (vn < 0) { o.vx -= (1 + RESTITUTION) * vn * nx; o.vy -= (1 + RESTITUTION) * vn * ny; }
+          }
+          o.img.style.transform = `translate(${o.x - R}px, ${o.y - R}px)`;
+        }
+        // things may leave the screen to the sides; they are gone once they are well past the edge
+        items = items.filter((o) => {
+          if (o.x > -2 * R - 200 && o.x < W + 2 * R + 200) return true;
+          o.img.remove(); return false;
+        });
+        if (items.length) requestAnimationFrame(step); else running = false;
+      }
+
+      function clear() { items.forEach((o) => o.img.remove()); items = []; }
+      function touching(x, y, reach) { return items.filter((o) => Math.hypot(o.x - x, o.y - y) < R + reach); }
+
+      let mx = 0, my = 0, mt = 0;
+      document.addEventListener("mousemove", (e) => {
+        const now = performance.now(), dt = Math.max((now - mt) / 1000, 0.008);
+        const vx = (e.clientX - mx) / dt, vy = (e.clientY - my) / dt;
+        mx = e.clientX; my = e.clientY; mt = now;
+        if (Reveal.getIndices().h !== 0) return;
+        // a swipe through an object hands it a fraction of the mouse's speed, at most once every 120 ms
+        for (const o of touching(mx, my, 0)) {
+          if (now - (o.nudged || 0) < 120) continue;
+          o.nudged = now;
+          o.vx += Math.max(-NUDGE_MAX, Math.min(NUDGE_MAX, vx * NUDGE));
+          o.vy += Math.max(-NUDGE_MAX, Math.min(NUDGE_MAX, vy * NUDGE));
+        }
+      });
+
+      document.querySelector(".reveal").addEventListener("click", (e) => {
+        if (Reveal.getIndices().h !== 0 || e.target.closest("a, button")) return;
+        const hit = touching(e.clientX, e.clientY, 6);
+        if (!hit.length) { spawn(e.clientX, e.clientY); return; }
+        for (const o of hit) {   // a click knocks it up and away from the pointer
+          const dx = o.x - e.clientX, dy = o.y - e.clientY, d = Math.hypot(dx, dy) || 1;
+          o.vx += (dx / d) * 250; o.vy += (dy / d) * 250 - 300;
+        }
+      });
+      Reveal.on("slidechanged", clear);
+    })();
+    Reveal.addKeyBinding({ keyCode: 84, key: "T", description: "Switch theme" }, nextTheme);
+  </script>
+</body>
+</html>
