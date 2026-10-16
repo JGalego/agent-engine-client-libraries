@@ -16,7 +16,7 @@ Use `agent-engine-sdk-memory` if your application reads or writes project memory
 
 See the [`hello-agent`](examples/hello-agent), [`assistant-agent`](examples/assistant-agent),
 [`graph-agent`](examples/graph-agent), [`approval-agent`](examples/approval-agent) and
-[`embedding-zoo`](examples/embedding-zoo) examples for running a Java agent in the local stack.
+[`near-miss`](examples/near-miss) examples for running a Java agent in the local stack.
 
 ## Install
 

@@ -1,0 +1,3 @@
+name: near-miss
+entrypoint: com.example.nearmiss.NearMissApp:app
+framework: langchain4j

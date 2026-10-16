@@ -35,7 +35,7 @@
     <module>examples/assistant-agent</module>
     <module>examples/graph-agent</module>
     <module>examples/approval-agent</module>
-    <module>examples/embedding-zoo</module>
+    <module>examples/near-miss</module>
   </modules>
 
   <properties>
