@@ -107,6 +107,9 @@ Note: 1:00. Section 1, about 1 minute.
 
 --
 
+<!-- .slide: data-skippable="true" -->
+### The press release
+
 ![MongoDB press release: MongoDB Launches Atlas Agent Engine to Put AI Agents in Production Without a New Stack, September 29, 2026](img/captures/press-release-announcement.png) <!-- .element: style="max-height: 540px" -->
 
 Note: The platform was announced on September 29, 2026. This is the public press release.
@@ -123,6 +126,9 @@ Note: The platform was announced on September 29, 2026. This is the public press
 Note: The platform's architecture, redrawn from the overview diagram. Everything this talk touches sits in the middle: the agent runtime and its state and memory. Click: the audience's inner voice. Click again for the second line. Alternates if you want to ad-lib: "shut up and take my money", "I want to try this, not hear about it", "every deck has this slide".
 
 --
+
+<!-- .slide: data-skippable="true" -->
+### The front door
 
 ![Atlas Agent Engine project overview: "Deploying enterprise agents has never been easier", with the CLI install and agentengine create steps](img/captures/agent-engine-overview.png) <!-- .element: style="max-height: 540px" -->
 
@@ -146,6 +152,8 @@ Note: There isn't one. The docs have Python and TypeScript SDK pages, and this U
 
 --
 
+### The CLI says no
+
 <div class="error" style="position: relative">
 
 <span class="fragment annot" style="left: 40px; top: -2.3em"><span class="annot-text">worst name ever!</span><svg viewBox="0 0 70 60" width="56" height="48" style="display:block; margin: -0.1em 0 0 1.6em"><path d="M8 4 C 14 24, 22 34, 36 48" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M24 46 L38 51 L38 36" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
@@ -167,6 +175,8 @@ Note: 0:30. Cold open. Let it sit for a second, then click for the arrow, and on
 
 --
 
+### The repo has no Java
+
 <pre class="plain"><a href="https://github.com/mongodb/agent-engine-client-libraries">agent-engine-client-libraries</a>
 <span class="fragment"> |
  ├── python/       ✅  SDK, memory, runner, LangGraph, ADK, OpenAI
@@ -178,6 +188,8 @@ Note: 0:30. Cold open. Let it sit for a second, then click for the arrow, and on
 Note: Click once per folder. A public mirror of a private monorepo. The runner (the part that serves agents) isn't documented anywhere public.
 
 --
+
+### The plan
 
 <div class="plan">
 <span style="--i:0" class="step">core SDK</span><span style="--i:1" class="arrow">→</span><span style="--i:2" class="step">memory</span><span style="--i:3" class="arrow">→</span><span style="--i:4" class="step">LangChain4j</span><span style="--i:5" class="arrow">→</span><span style="--i:6" class="step">runner</span><span style="--i:7" class="arrow">→</span><span style="--i:8" class="step">LangGraph4j</span><span style="--i:9" class="arrow">→</span><span style="--i:10" class="step cloud">☁️</span>
@@ -213,6 +225,7 @@ Note: Stage 1, the first brick in the plan. No server involved yet: can the Type
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Zod in, record out
 
 <p class="filename">📄 models.ts</p>
@@ -286,6 +299,7 @@ Note: Stage 2, the memory SDK. I tested it the careful way: an in-process fake H
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### What's h2c?
 
 HTTP/2 <em>over cleartext</em>. No TLS, just plain `http://`.
@@ -313,6 +327,7 @@ Note: The "c" is for cleartext. With TLS, HTTP/2 is negotiated during the handsh
 
 --
 
+<!-- .slide: data-skippable="true" -->
 <div class="error">
 
 #### The request body never arrived
@@ -391,6 +406,7 @@ Note: The first memory search that needs an embedding fails with a rate limit. S
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Whose limit is it?
 
 <div class="chat">
@@ -466,6 +482,8 @@ Note: A LangChain4j chat model in, the platform's BaseLLM out. This is trimmed f
 
 --
 
+### The docs say no Java
+
 <div class="track">
 <span class="step">core SDK</span><span class="arrow">→</span><span class="step">memory</span><span class="arrow">→</span><span class="step">LangChain4j</span><span class="arrow">→</span><span class="step here">runner</span><span class="arrow">→</span><span class="step">LangGraph4j</span><span class="arrow">→</span><span class="step cloud">☁️</span>
 </div>
@@ -478,6 +496,8 @@ Note: A LangChain4j chat model in, the platform's BaseLLM out. This is trimmed f
 Note: The full sentence: "The Atlas Agent Engine imports the agent inside the same process as the agent sandbox." The platform loads an agent as module:attribute inside its own Python or Node runner image, and cloud builds run remotely from pyproject.toml or package.json. So a Java agent can't be built or deployed on the managed platform today. That's from the docs, not from a deployment attempt.
 
 --
+
+### The way in
 
 <p class="big">Then how do they talk? 🤔</p>
 
@@ -532,6 +552,8 @@ Note: Three steps. Read the docs: done, that was the quote. Read the Python runn
 Note: `agentengine dev up` generates a compose file: the Orchestration Engine is a public image, MongoDB runs next to it, and there is one app container. The OE calls http://app:8001 (the agent runtime) and http://app:8002 (the tool server). Click: swap the app container for a Java one, and everything else stays real. That gave a test bed with no hosted platform.
 
 --
+
+### Swap one container
 
 The local stack's Orchestration Engine is a **public image**. Swap one container:
 
@@ -684,6 +706,7 @@ Note: First run of a graph agent through the SDK. Click for who is to blame.
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Whose thread is it?
 
 <div class="chat">
@@ -742,6 +765,7 @@ Note: Three turns on the same thread through the real OE. The third answer is th
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Why?
 
 <div class="chat">
@@ -808,11 +832,12 @@ Note: Opened first, with a proposal and two questions for the maintainers: which
 ### PR #493: the saver
 
 <div style="position: relative; display: inline-block; margin-right: 170px">
-<a href="https://github.com/langgraph4j/langgraph4j/pull/493" target="_blank" rel="noopener"><img src="img/captures/langgraph4j-pr.png" alt="GitHub pull request 493 on langgraph4j: feat: add langgraph4j-mongodb-saver" style="max-height: 470px; display: block"></a>
-<span class="fragment annot" style="left: 91%; top: 70%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">on the<br>roadmap!</span></span>
+<a href="https://github.com/langgraph4j/langgraph4j/pull/493" target="_blank" rel="noopener" style="display: grid"><img src="img/captures/langgraph4j-pr-open.png" alt="GitHub pull request 493 on langgraph4j: feat: add langgraph4j-mongodb-saver, open" style="grid-area: 1 / 1; max-height: 470px; display: block; margin: 0"><img class="fragment" data-fragment-index="2" src="img/captures/langgraph4j-pr.png" alt="The same pull request, now merged" style="grid-area: 1 / 1; max-height: 470px; display: block; margin: 0"></a>
+<span class="fragment annot" data-fragment-index="1" style="left: 91%; top: 70%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">on the<br>roadmap!</span></span>
+<span class="fragment annot" data-fragment-index="3" style="color: #D93025; left: 91%; top: 29%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">merged!<br>🎉</span></span>
 </div>
 
-Note: The PR closes the issue. Two collections, one for threads and one for checkpoints, unique indexes, no transactions so a standalone server is enough, and Testcontainers tests that include concurrent writers. It is open as I write this, assigned to a maintainer. Until it lands, the Java runtime keeps its checkpoints in memory.
+Note: The PR closes the issue. Two collections, one for threads and one for checkpoints, unique indexes, no transactions so a standalone server is enough, and Testcontainers tests that include concurrent writers. Click once for the roadmap note, then once more: the screenshot flips from open to merged (October 18), the roadmap note stays. Click again for the red merged arrow. Until a release ships it, the Java runtime keeps its checkpoints in memory.
 
 --
 
@@ -832,6 +857,7 @@ Note: Human in the loop. The agent throws a SuspendException, the OE parks the e
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### What did the OE actually send?
 
 <div class="chat">
@@ -881,6 +907,8 @@ Note: The agent gets back exactly what the reviewer sent, under the key of the r
 Note: 8:30. Section 5, about 3 minutes. The demo: Near Miss.
 
 --
+
+### What's a near miss?
 
 <p class="big">near miss</p>
 
@@ -965,6 +993,7 @@ Note: The same non-answer ranked first for every pump query. Click for the culpr
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Why?
 
 <div class="chat">
@@ -1232,6 +1261,7 @@ Note: The runner now builds its SSL context from TLS_CERT, TLS_KEY and TLS_CA_CE
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### One more catch: the key
 
 <div class="chat">
@@ -1295,6 +1325,9 @@ Note: The first build was refused after a 221 MB upload, because the platform ca
 
 --
 
+<!-- .slide: data-skippable="true" -->
+### The deployments page
+
 ![Deployments: BUILD FAILED, then SUCCEEDED](img/captures/deployments-build-failed-then-succeeded.png) <!-- .element: style="max-height: 540px" -->
 
 Note: The portal lists the first attempt as BUILD FAILED, then the pruned one as succeeded.
@@ -1325,6 +1358,7 @@ Note: The agent was up, the call to api.openai.com failed, and the egress policy
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Whose guess was right?
 
 <div class="chat">
@@ -1349,6 +1383,9 @@ Note: Passed through JAVA_OPTS, which the shim reads. The call got past the netw
 
 --
 
+<!-- .slide: data-skippable="true" -->
+### The log: Network is unreachable
+
 ![The platform's log: Network is unreachable](img/captures/log-network-unreachable.png) <!-- .element: style="max-height: 540px" -->
 
 Note: The log line from the sandbox.
@@ -1369,6 +1406,7 @@ Note: The call now reached the MongoDB driver, and failed resolving the cluster 
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Why?
 
 <div class="chat">
@@ -1401,6 +1439,9 @@ Note: A mongodb+srv address is short on purpose: the driver asks DNS for SRV rec
 
 --
 
+<!-- .slide: data-skippable="true" -->
+### The log: TXT lookup fails
+
 ![The platform's log: Failed looking up TXT record](img/captures/log-txt-record.png) <!-- .element: style="max-height: 540px" -->
 
 Note: The log line from the sandbox.
@@ -1422,6 +1463,7 @@ Note: Two open-ended questions got no records while the data was there. Filterin
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### What did it put in the filter?
 
 ```text
@@ -1526,6 +1568,7 @@ Note: ACN 2036402. A Maule M-4 lost power on the takeoff climb at 300 to 500 ft,
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### A 737 loses an engine at 22,000 feet
 
 <div style="display: flex; gap: 0.8em; align-items: center; justify-content: center">
@@ -1546,6 +1589,7 @@ Note: ACN 2081933. At about 22,000 ft the crew heard a loud thud with a sudden y
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### An A320 that wants to pitch up
 
 <div style="display: flex; gap: 0.8em; align-items: center; justify-content: center">
