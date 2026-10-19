@@ -46,7 +46,7 @@ public final class NearMissToolkit implements AutoCloseable {
     }
     int limit = Math.min(20, Math.max(1, Args.integer(args, "limit", 5)));
     QueryFilter filter = QueryFilter.fromArgs(args);
-    SearchResult result = store.search(embedder.embed(query), filter, limit);
+    SearchResult result = store.search(embedder.embedQuery(query), filter, limit);
     List<Map<String, Object>> hits = new ArrayList<>();
     for (ScoredRecord hit : result.hits()) {
       hits.add(hit.record().toHit(hit.score(), hit.scoreSource()));
@@ -108,7 +108,7 @@ public final class NearMissToolkit implements AutoCloseable {
     if (query == null) {
       return error("Provide ids or a query.");
     }
-    List<Double> vector = embedder.embed(query);
+    List<Double> vector = embedder.embedQuery(query);
     List<StoredRecord> picked = new ArrayList<>();
     Map<String, Object> byKind = new LinkedHashMap<>();
     for (String kind : KINDS) {

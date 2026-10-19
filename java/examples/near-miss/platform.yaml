@@ -15,3 +15,6 @@ network:
   egress:
     - fqdn: api.openai.com
       ports: [443]
+    # Voyage AI through Atlas, used only with NEAR_MISS_TEXT_PROVIDER=voyage
+    - fqdn: ai.mongodb.com
+      ports: [443]

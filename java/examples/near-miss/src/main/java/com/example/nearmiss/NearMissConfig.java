@@ -17,6 +17,9 @@ public final class NearMissConfig {
   private final String openAiKey;
   private final String openAiBaseUrl;
   private final String openAiEmbeddingModel;
+  private final String voyageKey;
+  private final String voyageBaseUrl;
+  private final String voyageModel;
   private final int recordsPerQuery;
   private final double analogyCutoff;
 
@@ -30,6 +33,9 @@ public final class NearMissConfig {
       String openAiKey,
       String openAiBaseUrl,
       String openAiEmbeddingModel,
+      String voyageKey,
+      String voyageBaseUrl,
+      String voyageModel,
       int recordsPerQuery,
       double analogyCutoff) {
     this.home = home;
@@ -41,6 +47,9 @@ public final class NearMissConfig {
     this.openAiKey = openAiKey;
     this.openAiBaseUrl = openAiBaseUrl;
     this.openAiEmbeddingModel = openAiEmbeddingModel;
+    this.voyageKey = voyageKey;
+    this.voyageBaseUrl = voyageBaseUrl;
+    this.voyageModel = voyageModel;
     this.recordsPerQuery = recordsPerQuery;
     this.analogyCutoff = analogyCutoff;
   }
@@ -62,6 +71,10 @@ public final class NearMissConfig {
           blankToNull(env.get("OPENAI_API_KEY")),
           env.getOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
           env.getOrDefault("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+          // The same project secret the memory server uses, so one key covers both.
+          blankToNull(env.get("VOYAGE_API_KEY")),
+          env.getOrDefault("NEAR_MISS_VOYAGE_BASE_URL", "https://ai.mongodb.com/v1"),
+          env.getOrDefault("NEAR_MISS_VOYAGE_MODEL", "voyage-4"),
           parseInt(env.get("NEAR_MISS_RECORDS_PER_QUERY"), 25),
           parseDouble(env.get("NEAR_MISS_ANALOGY_CUTOFF"), 0.45));
     } catch (IOException e) {
@@ -78,6 +91,9 @@ public final class NearMissConfig {
   public String openAiKey() { return openAiKey; }
   public String openAiBaseUrl() { return openAiBaseUrl; }
   public String openAiEmbeddingModel() { return openAiEmbeddingModel; }
+  public String voyageKey() { return voyageKey; }
+  public String voyageBaseUrl() { return voyageBaseUrl; }
+  public String voyageModel() { return voyageModel; }
   public int recordsPerQuery() { return recordsPerQuery; }
   public double analogyCutoff() { return analogyCutoff; }
   public Path modelDir() { return dataDir.resolve("models").resolve("minilm"); }

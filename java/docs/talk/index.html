@@ -135,7 +135,10 @@
     .plan > * { opacity: 0; }
     .plan.run > * { animation: plan-in 0.4s ease-out forwards; animation-delay: calc(var(--i) * 0.35s + 0.3s); }
     @keyframes plan-in { from { opacity: 0; transform: translateY(0.4em); } to { opacity: 1; transform: none; } }
-    @media (prefers-reduced-motion: reduce) { .plan > * { opacity: 1 !important; animation: none !important; } }
+    /* The same build-up for a flow of pills: .flow.auto draws itself, one piece every half second. */
+    .flow.auto > * { display: flex; align-items: center; gap: 0.5em; opacity: 0; }
+    .flow.auto.run > * { animation: plan-in 0.4s ease-out forwards; animation-delay: calc(var(--i) * 0.5s + 0.3s); }
+    @media (prefers-reduced-motion: reduce) { .plan > *, .flow.auto > * { opacity: 1 !important; animation: none !important; } }
     /* "You are here" strip: the plan from the intro, static, with the current step lit. */
     .track { display: flex; flex-wrap: nowrap; white-space: nowrap; justify-content: center; align-items: center; gap: 0.2em; margin-bottom: 0.8em; }
     .track .step { padding: 0.2em 0.6em; border-radius: 999px; background: var(--accent-soft); color: var(--heading); font-weight: 600; font-size: 0.55em; opacity: 0.45; }
@@ -215,6 +218,7 @@
     #theme-toggle img { height: 20px; width: auto; }
     #theme-toggle:hover, #theme-toggle:focus-visible { opacity: 1; }
     @media print { #corner { display: none; } }
+    html.redux .pdf-page:has(> section[data-skippable]) { display: none; }
     /* Side index: table of contents plus full-text search, toggled with I or the corner button. */
     #toc-toggle, #redux-toggle {
       border: 1px solid var(--muted); border-radius: 999px; padding: 6px 14px;
@@ -248,6 +252,61 @@
     #toc mark { background: var(--divider-accent); color: inherit; border-radius: 2px; }
     #toc .empty { padding: 8px 16px; color: var(--muted); }
     @media print { #toc { display: none; } }
+    /* The Disney slide: a night sky, a storybook title and four acts. */
+    .reveal .disney { color: #F4F1FF; }
+    .reveal .disney-title {
+      margin: 0 0 0.5em; font: 700 2.6em/1 "Caveat", "Segoe Print", cursive; color: #FFF6D8;
+      text-shadow: 0 0 18px rgba(255, 214, 120, 0.75), 0 0 2px #fff;
+    }
+    .reveal .acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5em; }
+    .reveal .act {
+      display: flex; flex-direction: column; align-items: center; gap: 0.25em; padding: 0.6em 0.4em;
+      border: 1px solid rgba(255, 233, 170, 0.45); border-radius: 0.8em; background: rgba(255, 255, 255, 0.06);
+      font-size: 0.62em; line-height: 1.25;
+    }
+    .reveal .act strong { color: #FFE9A8; }
+    .reveal .act small { font-size: 0.78em; opacity: 0.9; }
+    .reveal .act code { color: #FFB74D; font-size: 0.9em; white-space: nowrap; }
+    .reveal .act-icon { font-size: 2em; }
+    .reveal .dedication { margin-top: 1.4em; font: 700 0.95em "Caveat", "Segoe Print", cursive; color: #FFE9A8; }
+    .reveal .sparkles { position: absolute; inset: -40px; pointer-events: none; }
+    .reveal .sparkles i {
+      position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #FFF6D8;
+      box-shadow: 0 0 8px 2px rgba(255, 233, 170, 0.8); animation: twinkle 2.4s ease-in-out infinite;
+    }
+    .reveal .sparkles i:nth-child(1) { left: 6%; top: 8%; } .reveal .sparkles i:nth-child(2) { left: 18%; top: 30%; animation-delay: 0.4s; }
+    .reveal .sparkles i:nth-child(3) { left: 30%; top: 5%; animation-delay: 1.1s; } .reveal .sparkles i:nth-child(4) { left: 44%; top: 22%; animation-delay: 0.7s; }
+    .reveal .sparkles i:nth-child(5) { left: 58%; top: 6%; animation-delay: 1.6s; } .reveal .sparkles i:nth-child(6) { left: 70%; top: 28%; animation-delay: 0.2s; }
+    .reveal .sparkles i:nth-child(7) { left: 84%; top: 10%; animation-delay: 1.3s; } .reveal .sparkles i:nth-child(8) { left: 94%; top: 34%; animation-delay: 0.9s; }
+    .reveal .sparkles i:nth-child(9) { left: 10%; top: 88%; animation-delay: 1.8s; } .reveal .sparkles i:nth-child(10) { left: 36%; top: 94%; animation-delay: 0.5s; }
+    .reveal .sparkles i:nth-child(11) { left: 66%; top: 90%; animation-delay: 1.4s; } .reveal .sparkles i:nth-child(12) { left: 90%; top: 84%; animation-delay: 0.1s; }
+    @keyframes twinkle { 0%, 100% { opacity: 0.15; transform: scale(0.6); } 50% { opacity: 1; transform: scale(1.3); } }
+    @media (prefers-reduced-motion: reduce) { .reveal .sparkles i { animation: none; opacity: 0.6; } }
+
+    /* The letter types itself: characters are laid out but hidden until typed; a caret follows the last one. */
+    .reveal .letter .ch { visibility: hidden; }
+    .reveal .letter .ch.on { visibility: visible; }
+    .reveal .letter .ch.caret { position: relative; }
+    .reveal .letter .ch.caret::after {
+      content: ""; position: absolute; right: -2px; top: 0.1em; bottom: 0.05em; width: 2px;
+      background: currentColor; animation: caret 0.9s steps(1) infinite;
+    }
+    @keyframes caret { 50% { opacity: 0; } }
+
+    /* The finale: the title gets scribbled out and rewritten by hand. */
+    .reveal .scratch { position: relative; display: inline-block; }
+    .reveal .scratch h1 { position: relative; font-size: 2.6em; margin: 0; }
+    .reveal .scribble { position: absolute; left: -4%; top: 5%; width: 108%; height: 90%; overflow: visible; }
+    .reveal .scribble path { fill: none; stroke: #D92D20; stroke-width: 9; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+    .reveal .scribble.visible path { animation: scribble 0.7s ease-out forwards; }
+    @keyframes scribble { to { stroke-dashoffset: 0; } }
+    .reveal .handwritten {
+      margin: 0.2em 0 0; font: 700 3.2em/1 "Caveat", "Segoe Print", cursive; color: var(--accent);
+      transform: rotate(-4deg) scale(0.6); transition: transform 0.5s cubic-bezier(0.2, 1.7, 0.4, 1), opacity 0.3s;
+    }
+    .reveal .handwritten.visible { transform: rotate(-4deg) scale(1); }
+    @media (prefers-reduced-motion: reduce) { .reveal .scribble.visible path { animation: none; stroke-dashoffset: 0; } }
+
     /* Title slide toy: a click drops a leaf or a mug that falls and bounces off the text. */
     #drops { position: fixed; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
     #drops img { position: absolute; left: 0; top: 0; width: 56px; height: 56px; will-change: transform; }
@@ -391,15 +450,81 @@
 
     // Restart the build-up each time its slide is entered, from either direction
     function restartPlan(event) {
-      document.querySelectorAll(".plan.run").forEach((el) => el.classList.remove("run"));
-      const plan = event.currentSlide && event.currentSlide.querySelector(".plan");
-      if (plan) {
-        void plan.offsetWidth;
-        plan.classList.add("run");
-      }
+      document.querySelectorAll(".plan.run, .flow.auto.run").forEach((el) => el.classList.remove("run"));
+      if (!event.currentSlide) return;
+      event.currentSlide.querySelectorAll(".plan, .flow.auto").forEach((el) => {
+        void el.offsetWidth;
+        el.classList.add("run");
+      });
     }
     Reveal.on("ready", restartPlan);
     Reveal.on("slidechanged", restartPlan);
+
+    // The letter types itself at reading speed. Each paragraph is a fragment; when one is done the next
+    // follows on its own, and a click mid-paragraph finishes it and moves on. Every character is laid out
+    // from the start (only hidden), so the letter never reflows while it types.
+    (function () {
+      const CPS = 22;   // characters a second, about 260 words a minute
+      let timer = null, current = null;
+      const still = () => document.documentElement.classList.contains("print-pdf")
+        || matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      function chars(el) {
+        if (!el.dataset.typed) {
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          const nodes = [];
+          while (walker.nextNode()) nodes.push(walker.currentNode);
+          nodes.forEach((node) => {
+            const frag = document.createDocumentFragment();
+            for (const c of node.data) {
+              const span = document.createElement("span");
+              span.className = "ch";
+              span.textContent = c;
+              frag.append(span);
+            }
+            node.replaceWith(frag);
+          });
+          el.dataset.typed = "1";
+        }
+        return [...el.querySelectorAll(".ch")];
+      }
+      function finish() {
+        clearTimeout(timer); timer = null;
+        if (current) current.querySelectorAll(".ch").forEach((c) => c.classList.add("on"));
+        document.querySelectorAll(".letter .caret").forEach((c) => c.classList.remove("caret"));
+        current = null;
+      }
+      function advance() {
+        timer = null;
+        const slide = Reveal.getCurrentSlide();
+        if (slide && slide.querySelector(".letter") && Reveal.availableFragments().next) Reveal.nextFragment();
+      }
+      function type(el) {
+        finish();
+        const all = chars(el);
+        all.forEach((c) => c.classList.remove("on"));
+        current = el;
+        let i = 0;
+        const tick = () => {
+          if (i > 0) all[i - 1].classList.remove("caret");
+          if (i >= all.length) { current = null; timer = setTimeout(advance, 900); return; }
+          const c = all[i++];
+          c.classList.add("on", "caret");
+          const pause = /[.!?]/.test(c.textContent) ? 8 : /[,;:]/.test(c.textContent) ? 4 : 1;
+          timer = setTimeout(tick, pause * 1000 / CPS);
+        };
+        tick();
+      }
+
+      Reveal.on("fragmentshown", (e) => { if (!still() && e.fragment.closest(".letter")) type(e.fragment); });
+      Reveal.on("fragmenthidden", (e) => { if (e.fragment.closest(".letter")) finish(); });
+      Reveal.on("slidechanged", (e) => {
+        finish();
+        // Entering the letter from the front: start typing without a click.
+        const letter = e.currentSlide && e.currentSlide.querySelector(".letter");
+        if (letter && !still() && !letter.querySelector(".fragment.visible")) timer = setTimeout(advance, 800);
+      });
+    })();
 
     // Falling things. Gravity, air drag, and an elastic bounce off the floor and the
     // text blocks of the title slide. The leaf and the mug alternate. Move the mouse through one to
@@ -567,6 +692,11 @@
       const btn = document.getElementById("redux-toggle");
       let parked = [];
       function set(on) {
+        if (document.documentElement.classList.contains("print-pdf")) {
+          // The PDF layout is already built page by page; hide the pages instead of re-syncing it.
+          document.documentElement.classList.toggle("redux", on);
+          return;
+        }
         const here = Reveal.getCurrentSlide();
         if (on && !parked.length) {
           document.querySelectorAll(".slides section[data-skippable]").forEach((el) => {

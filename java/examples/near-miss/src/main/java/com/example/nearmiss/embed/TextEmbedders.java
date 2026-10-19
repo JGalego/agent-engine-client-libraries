@@ -13,6 +13,9 @@ public final class TextEmbedders {
     if ("openai".equalsIgnoreCase(provider)) {
       return new OpenAiTextEmbedder(config);
     }
+    if ("voyage".equalsIgnoreCase(provider)) {
+      return new VoyageTextEmbedder(config);
+    }
     if ("minilm".equalsIgnoreCase(provider)) {
       return MiniLmEmbedder.open(config);
     }
@@ -20,6 +23,6 @@ public final class TextEmbedders {
       return MiniLmEmbedder.open(config, true);
     }
     throw new IllegalArgumentException(
-        "NEAR_MISS_TEXT_PROVIDER must be minilm, minilm-int8 or openai, not " + provider);
+        "NEAR_MISS_TEXT_PROVIDER must be minilm, minilm-int8, openai or voyage, not " + provider);
   }
 }

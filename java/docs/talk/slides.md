@@ -7,10 +7,11 @@ Shipping Java agents to MongoDB Atlas Agent Engine
 <p class="small">MongoDB × Java meetup · November 2026</p>
 </div>
 
-Note: 0:00. One sentence: "This is the story of getting Java onto a platform that only speaks Python and TypeScript."
+Note: 0:00. Thirty minutes in the redux (R). One sentence: "This is the story of getting Java onto a platform that only speaks Python and TypeScript."
 
 ---
 
+<!-- .slide: data-skippable="true" -->
 # $ whoami
 
 --
@@ -22,7 +23,7 @@ Note: 0:00. One sentence: "This is the story of getting Java onto a platform tha
 <div style="flex: 1"><h4 style="margin: 0 0 0.8em">Work</h4><p style="margin: 0.9em 0 0.2em">Lead ML Engineer</p><p style="margin: 0"><img src="img/whoami/siemens.png" style="height: 34px; margin: 0 0.3em; vertical-align: middle"></p><p style="margin: 0.9em 0 0.2em">Solutions Architect</p><p style="margin: 0"><img src="img/whoami/aws.png" style="height: 52px; margin: 0 0.3em; vertical-align: middle"></p><p style="margin: 0.9em 0 0.2em">Head of AI</p><p style="margin: 0"><img src="img/whoami/csw.png" style="height: 40px; margin: 0 0.3em; vertical-align: middle"></p></div>
 </div>
 
-Note: Keep it quick. The PhD is ABD; I once performed an autopsy (the forensics diploma), which gets a laugh.
+Note: 0:30. The whole whoami is about a minute and a half. Keep it quick. The PhD is ABD; I once performed an autopsy (the forensics diploma), which gets a laugh.
 
 --
 
@@ -36,6 +37,7 @@ Note: Critical Software, from the company's own site (criticalsoftware.com): the
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ## Tenets to live by
 
 <div style="display: flex; gap: 1.2em; align-items: center">
@@ -47,6 +49,7 @@ Note: Amazon's Principal Engineering Community tenets, nine of them on the publi
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ## TL;DR
 
 Break things at scale
@@ -100,10 +103,159 @@ Note: The finger output is real: the server at plan.cat answers on port 79. Carr
 
 ---
 
+<!-- .slide: class="disney" data-background-gradient="radial-gradient(ellipse at 50% 0%, #2B4C9B 0%, #10204A 55%, #060B1F 100%)" -->
+<div class="sparkles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+
+<p class="disney-title">Once upon a time…</p>
+
+<div class="acts">
+<div class="act fragment"><span class="act-icon">🏰</span><strong>The kingdom</strong><small>A Java agent dreams of Atlas</small></div>
+<div class="act fragment"><span class="act-icon">🐉</span><strong>The curse</strong><small>A dragon named <code>java-none</code></small></div>
+<div class="act fragment"><span class="act-icon">🗺️</span><strong>The quest</strong><small>Smuggle Java past the dragon</small></div>
+<div class="act fragment"><span class="act-icon">✨</span><strong>Happily ever after</strong><small>Java answers from Atlas</small></div>
+</div>
+
+<p class="dedication">Dedicated to João Mourão, who asked for a Disney movie</p>
+
+Note: The structure of the talk, told the way João Mourão (MongoDB SA) suggested: context, the problem, the journey, the resolution. Click once per act. Credit him by name: the reorder was his idea. Not affiliated with Disney; the sparkles are CSS.
+
+---
+
+<!-- .slide: data-background-color="var(--divider)" -->
+## <span class="divider-title"><span class="chapter">Prologue</span>Once upon a time</span>
+
+Note: 2:00. The prologue, about 4 minutes. What we're building and what it looks like when it works, before any of the pain.
+
+--
+
+### What's a near miss?
+
+<p class="big">near miss</p>
+
+<p class="fragment" style="font-size: 1.1em"><em>noun</em> · an incident that nearly became an accident</p>
+
+<div class="flow auto">
+<span style="--i:0"><span class="pill bad">⚠️ Close call</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill">📝 Someone reports it</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill good">🔎 An agent finds it</span></span>
+</div>
+
+Note: An aviation term, and the name of the demo. Real public safety reports, searched by an agent. High stakes on purpose: it forces the agent to be careful about what it claims.
+
+--
+
+### Where the reports come from
+
+<svg viewBox="0 0 1000 410" role="img" aria-label="Three public sources, FDA MAUDE, NHTSA and NASA ASRS, are embedded by MiniLM in Java and stored in one Atlas Vector Search index" style="width:100%;max-height:520px">
+<defs><marker id="wa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker></defs>
+<rect x="20" y="30" width="290" height="100" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="62" y="92" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="38">🏥</text><text x="104" y="68" text-anchor="start" font-weight="700" fill="var(--heading)" font-size="20">FDA MAUDE</text><text x="104" y="92" text-anchor="start" font-weight="400" fill="var(--heading)" font-size="15">medical device reports</text><text x="104" y="114" text-anchor="start" font-weight="500" fill="var(--muted)" font-size="14" font-family="var(--r-code-font)">openFDA API</text><rect x="20" y="160" width="290" height="100" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="62" y="222" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="38">🚗</text><text x="104" y="198" text-anchor="start" font-weight="700" fill="var(--heading)" font-size="20">NHTSA</text><text x="104" y="222" text-anchor="start" font-weight="400" fill="var(--heading)" font-size="15">vehicle complaints</text><text x="104" y="244" text-anchor="start" font-weight="500" fill="var(--muted)" font-size="14" font-family="var(--r-code-font)">complaints API</text><rect x="20" y="290" width="290" height="100" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="62" y="352" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="38">✈️</text><text x="104" y="328" text-anchor="start" font-weight="700" fill="var(--heading)" font-size="20">NASA ASRS</text><text x="104" y="352" text-anchor="start" font-weight="400" fill="var(--heading)" font-size="15">aviation safety reports</text><text x="104" y="374" text-anchor="start" font-weight="500" fill="var(--muted)" font-size="14" font-family="var(--r-code-font)">report-set PDFs</text>
+<g class="fragment"><path d="M312 80 C 370 80, 360 185, 416 185" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><path d="M312 210 L 416 210" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><path d="M312 340 C 370 340, 360 235, 416 235" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><text x="364" y="200" text-anchor="middle" font-weight="600" fill="var(--accent)" font-size="15">text</text><rect x="420" y="135" width="230" height="150" rx="14" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><path transform="translate(467 152) scale(1.167)" fill="var(--heading)" d="M1.4446 11.5059c0 1.1021.1673 2.1585.4847 3.1563-.0378-.0028-.0691-.0058-.1058-.0058-.4209 0-.8015.16-1.0704.4512-.3454.3737-.4984.8335-.4316 1.293a1.576 1.576 0 0 0 .2148.5978c-.2319.1864-.4018.4456-.4844.7578-.0646.2448-.131.7543.2149 1.2794a1.4552 1.4552 0 0 0-.0625.1055c-.208.3923-.2207.8372-.0371 1.25.2783.6258.9696 1.1175 2.3126 1.6467.8356.3292 1.5988.5411 1.6056.543 1.1046.2847 2.104.4277 2.969.4277 1.4173 0 2.4754-.3849 3.1525-1.1446 1.538.2651 2.791.1403 3.592.006.6773.7555 1.7332 1.1387 3.1467 1.1387.8649 0 1.8643-.143 2.969-.4278.0068-.0019.77-.2138 1.6056-.543 1.343-.5292 2.0343-1.0208 2.3126-1.6466.1836-.4129.171-.8577-.037-1.25a1.4685 1.4685 0 0 0-.0626-.1056c.346-.525.2795-1.0346.2149-1.2793-.0826-.3122-.2525-.5714-.4844-.7579.11-.1816.1831-.3788.2148-.5977.0669-.4595-.0862-.9193-.4316-1.293-.2688-.2913-.6495-.4513-1.0704-.4513-.0209 0-.0376.0008-.0588.0018.3162-.9966.4846-2.0518.4846-3.1523 0-5.807-4.7362-10.5144-10.5789-10.5144-5.8426 0-10.5788 4.7073-10.5788 10.5144Zm10.5788-9.4831c5.2727 0 9.5476 4.246 9.5476 9.483a9.4201 9.4201 0 0 1-.2696 2.2365c-.0039-.0047-.0079-.011-.0117-.0156-.274-.3255-.6679-.5059-1.1075-.5059-.352 0-.714.1155-1.0763.3438-.2403.1517-.5058.422-.7793.7598-.2534-.3492-.608-.5832-1.0137-.6465a1.5174 1.5174 0 0 0-.2344-.0176c-.9263 0-1.4828.7993-1.6935 1.5177-.1046.2426-.6065 1.3482-1.3614 2.0978-1.1681 1.1601-1.4458 2.3534-.8396 3.6382-.843.1029-1.5836.0927-2.365-.006.5906-1.212.3626-2.4388-.8426-3.6322-.755-.7496-1.2568-1.8552-1.3614-2.0978-.2107-.7184-.7673-1.5177-1.6935-1.5177-.078 0-.1568.0054-.2344.0176-.4057.0633-.7604.2973-1.0137.6465-.2735-.3379-.539-.6081-.7794-.7598-.3622-.2283-.7243-.3438-1.0762-.3438-.4266 0-.8094.171-1.0821.4786a9.4208 9.4208 0 0 1-.2598-2.1936c0-5.237 4.2749-9.483 9.5475-9.483zM8.6443 7.0036c-.4838.0043-.9503.2667-1.1934.7227-.3536.6633-.1006 1.4873.5645 1.84.351.1862.4883-.5261.836-.6485.3107-.1095.841.399 1.0078.086.3536-.6634.1025-1.4874-.5625-1.84a1.3659 1.3659 0 0 0-.6524-.1602Zm6.8403 0c-.2199-.002-.4426.05-.6504.1602-.665.3526-.9181 1.1766-.5645 1.84.1669.313.6971-.1955 1.0079-.086.3476.1224.4867.8347.838.6485.6649-.3527.916-1.1767.5624-1.84-.243-.456-.7096-.7184-1.1934-.7227Zm-9.7565 1.418a.8768.8768 0 0 0-.877.877c0 .4846.3925.877.877.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zm12.6434 0c-.4845 0-.879.3925-.879.877 0 .4846.3945.877.879.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zM8.7927 11.459c-.179-.003-.2793.1107-.2793.416 0 .8097.3874 2.125 1.4279 2.924.207-.7123 1.3453-1.2832 1.5079-1.2012.2315.1167.2191.4417.6074.7266.3884-.285.374-.6098.6056-.7266.1627-.082 1.3009.4889 1.5079 1.2012 1.0404-.799 1.4278-2.1144 1.4278-2.924 0-1.2212-1.583.6402-3.5413.6485-1.4686-.0061-2.7266-1.0558-3.2639-1.0645zM4.312 14.4768c.5792.365 1.6964 2.2751 2.1056 3.0177.1371.2488.371.3536.582.3536.4188 0 .7465-.4138.0391-.9395-1.0636-.791-.6914-2.0846-.1836-2.1642a.4302.4302 0 0 1 .0664-.004c.4616 0 .666.7892.666.7892s.5959 1.4898 1.6213 2.508c.942.9356 1.062 1.703.4961 2.6661-.0164-.004-.0159.0236-.1484.2149-.1853.2673-.4322.4688-.7188.6152-.5062.2269-1.1397.2696-1.7833.2696-1.037 0-2.1017-.1824-2.6975-.336-.0293-.0075-3.6505-.9567-3.1916-1.8224.0771-.1454.2033-.2031.3633-.2031.6463 0 1.823.9551 2.3283.9551.113 0 .196-.0865.2285-.2031.2249-.8045-3.2787-1.0522-2.9846-2.1642.0519-.1967.193-.2757.3907-.2754.854 0 2.7704 1.4923 3.172 1.4923.0307 0 .0525-.0085.0645-.0274.2012-.3227.1096-.5865-1.3087-1.4395-1.4182-.8533-2.4315-1.329-1.8653-1.9416.0651-.0707.1574-.1015.2695-.1015.8611.0002 2.8948 1.84 2.8948 1.84s.5487.5683.8809.5683c.0762 0 .1416-.0315.1855-.1054.2355-.3946-2.1858-2.2183-2.3224-2.971-.0926-.51.0641-.7676.3555-.7676-.0006.008.1701-.0285.4942.1759zm16.2257.5918c-.1366.7526-2.5579 2.5764-2.3224 2.9709.044.074.1092.1055.1855.1055.3321 0 .881-.5684.881-.5684s2.0336-1.8397 2.8947-1.84c.1121 0 .2044.0308.2695.1016.5662.6125-.447 1.0882-1.8653 1.9415-1.4183.853-1.51 1.1168-1.3087 1.4396.012.0188.0337.0273.0644.0273.4016 0 2.3181-1.4923 3.1721-1.4923.1977-.0002.3388.0787.3907.2754.294 1.112-3.2095 1.3597-2.9846 2.1642.0325.1166.1156.2032.2285.2032.5054 0 1.682-.9552 2.3283-.9552.16 0 .2862.0577.3633.2032.459.8656-3.1623 1.8149-3.1916 1.8224-.5958.1535-1.6605.336-2.6975.336-.6351 0-1.261-.0409-1.7638-.2599-.2949-.1472-.5488-.3516-.7383-.625-.0411-.0682-.1026-.1476-.1426-.205-.5726-.9679-.455-1.7371.4903-2.676 1.0254-1.0182 1.6212-2.508 1.6212-2.508s.2044-.7891.666-.7891a.4318.4318 0 0 1 .0665.0039c.5078.0796.88 1.3732-.1836 2.1642-.7074.5257-.3797.9395.039.9395.211 0 .445-.1047.5821-.3535.4092-.7426 1.5264-2.6527 2.1056-3.0178.5588-.3524.99-.1816.8497.5918z"/><path transform="translate(521 152) scale(1.167)" fill="var(--heading)" d="M23.0325 11.2963c-.0503 0-.1006 0-.1508.0126l-4.021-7.4387c.0754-.1383.1131-.289.1131-.4524 0-.5403-.4398-.9675-.9675-.9675-.2765 0-.5278.113-.7037.3015L9.286 1.156C9.2357.6785 8.821.3016 8.3184.3016c-.5277 0-.9675.4398-.9675.9675 0 .1634.0377.3141.113.4524l-6.245 8.9591c-.0753-.0251-.1633-.0377-.2513-.0377-.5403 0-.9675.4398-.9675.9676 0 .5403.4398.9675.9675.9675h.0377l3.3676 8.3309c-.0503.1257-.088.2639-.088.402 0 .5404.4398.9676.9676.9676.2764 0 .5277-.113.7036-.3015l10.1152.9926c.1005.4273.49.7288.9424.7288.5403 0 .9676-.4398.9676-.9675 0-.2388-.088-.465-.2262-.6283l5.1141-8.8712c.0503.0126.1005.0126.1634.0126.5403 0 .9675-.4398.9675-.9676 0-.5403-.4272-.98-.9675-.98zM17.2272 4.021c.1131.1508.2765.264.4524.3267l-1.533 11.5728c-.1005.0252-.1885.0503-.2764.1005L7.4513 8.708c.0251-.0754.0377-.1634.0377-.2514 0-.0628-.0126-.1256-.0126-.1884zm4.8754 8.5068l-5.177 3.556a1.105 1.105 0 0 0-.1256-.0753L18.3455 4.335h.0126l3.9456 7.288c-.1508.1759-.2388.3895-.2388.6408 0 .1005.0126.1885.0377.2638zM6.3832 7.5016c-.4649.0754-.8293.4775-.8293.955v.0628l-3.4555 2.0481 5.378-7.7026zm.3519 1.91c.1256-.0252.2513-.088.3518-.1634l8.356 7.2628c-.0377.113-.0628.2262-.0628.3518v.0503l-9.311 3.845c-.1382-.201-.3518-.3518-.6031-.402zm8.8963 8.1172c.1257.1382.3016.2513.5026.289l.465 4.046c-.201.1006-.3519.264-.4524.4524l-9.8136-.955zm1.1435.2136c.3267-.1633.5403-.49.5403-.867 0-.088-.0126-.1634-.0377-.2513l4.7372-3.2545-4.8 8.331zm.2513-14.3497l-9.889 4.31-.1131-.0755 1.2565-5.3906h.0377c.3393 0 .6409-.1759.8168-.4397l7.891 1.5706zM1.935 11.6105c0-.0629-.0126-.1257-.0126-.1885l3.9079-2.2995c.0754.0754.1633.1508.2638.201L4.8252 20.243l-3.2043-7.9036c.1885-.176.3142-.4398.3142-.7288Z"/><image href="img/java.svg" x="575" y="150" width="23" height="32"/><text x="535" y="222" text-anchor="middle" font-weight="700" fill="var(--heading)" font-size="22">MiniLM</text><text x="535" y="248" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="15">embeds the text</text><text x="535" y="268" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="15">in Java</text></g>
+<g class="fragment"><path d="M652 210 L 748 210" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><text x="700" y="198" text-anchor="middle" font-weight="600" fill="var(--accent)" font-size="15">vectors</text><rect x="752" y="135" width="230" height="150" rx="14" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/><image href="img/mongodb-icon.svg" x="855" y="148" width="20" height="42"/><text x="867" y="225" text-anchor="middle" font-weight="700" fill="#fff" font-size="22">Atlas</text><text x="867" y="250" text-anchor="middle" font-weight="700" fill="#fff" font-size="18">Vector Search</text><text x="867" y="272" text-anchor="middle" font-weight="400" fill="#fff" font-size="14">one index to rule them all</text></g>
+</svg>
+
+Note: Device adverse events, vehicle complaints and aviation safety reports, from three agencies. One local embedding model, MiniLM, running through ONNX inside the JVM, and one Atlas vector index. Each record is stored with its provenance and licence. The agent has three tools: semantic search, metadata filter and evidence correlation.
+
+--
+
+### Look ma, no console
+
+<p class="filename">📄 AtlasVectorStore.java</p>
+
+```java
+var definition = new Document("fields", List.of(
+    new Document("type", "vector").append("path", "embedding")
+        .append("numDimensions", dims)  // 384 MiniLM, 1024 Voyage
+        .append("similarity", "cosine"),
+    new Document("type", "filter").append("path", "kind"),
+    new Document("type", "filter").append("path", "dataset_id")));
+
+collection.createSearchIndexes(List.of(new SearchIndexModel(
+    "near_miss", definition, SearchIndexType.vectorSearch())));
+```
+
+<div class="fragment">
+
+```java
+vectorSearch(fieldPath("embedding"), query, "near_miss", limit,
+    approximateVectorSearchOptions(candidates)
+        .filter(eq("dataset_id", "nasa-asrs")))
+```
+
+</div>
+
+<p class="fragment" style="font-size: 1.1em">Clicks don't survive a <code>git clone</code>.</p>
+
+Note: The whole Atlas Vector Search setup, trimmed from AtlasVectorStore.java. One vector field with cosine similarity, plus two filter fields so a search can be limited to one kind or one dataset. Ingest calls this if the index is missing, then waits for it to be READY. Click for the query side: the $vectorSearch stage from the Java driver's builders, with the filter on dataset_id. candidates is ten times the limit, at least 40. If the index isn't READY, the store falls back to an exact cosine scan and says so in the result, it never pretends.
+
+--
+
+### Search by meaning
+
+<div class="chat">
+<div class="bubble client l fragment fade-up">🧑 "engine lost power during climb"</div>
+</div>
+
+<div class="fragment">
+
+```text
+0.533  M-4, Takeoff / Launch. Pilot flying Maule M4 aircraft
+       reported engine loss of power inflight…
+
+0.479  B737-700, Climb. Air carrier Captain reported an engine
+       failure during climb…
+
+0.42   Aeronca Champion, Commuter and GA Icing Incidents…
+```
+
+</div>
+
+<p class="fragment" style="font-size: 1.1em">Different words, same meaning.</p>
+
+Note: Real output, in memory, no Atlas needed. The three ASRS reports come from three different report sets, and none of them says "lost power during climb" in those words.
+
+--
+
+<!-- .slide: data-skippable="true" -->
+### Same index, other agencies
+
+```text
+> insulin pump delivered too much insulin
+
+0.659  INSULIN PUMP, Injury
+       IT WAS REPORTED THAT CARTRIDGE CHANGE ERRORS OCCURRED
+       WITH MULTIPLE CARTRIDGES DURING THE LOAD SEQUENCE…
+```
+
+<p class="fragment" style="font-size: 1.1em">One box for pumps and planes.</p>
+
+Note: Real result from the in-memory run: a MAUDE report for the pump. The pump and the aeroplane came out of the same index, with one embedding model.
+
+--
+
+### Spoiler: the happy ending
+
+<p style="font-size: 0.55em; margin: 0 0 0.4em"><em>"The Road goes ever on and on / Down from the door where it began."</em> <span class="small">— J.R.R. Tolkien, <em>The Fellowship of the Ring</em></span></p>
+
+<div style="display: flex; gap: 0.8em; align-items: center; width: 960px; position: relative; left: 50%; transform: translateX(-50%)">
+<svg viewBox="0 0 1000 610" role="img" aria-label="Near Miss on the Atlas Agent Engine: ingest on your machine, a package, the managed Agent Engine with a Python shim, Java runner, Orchestration Engine and Java tools, the Atlas cluster, OpenAI and the caller" style="flex: 2.6; min-width: 0; max-height: 560px">
+<defs><marker id="rah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker><marker id="gah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+<g class="fragment" data-fragment-index="1"><rect x="20" y="370" width="500" height="230" rx="16" fill="var(--code-bg)" stroke="var(--muted)" stroke-width="2"/><text x="40" y="392" text-anchor="start" fill="var(--heading)" font-size="19" font-weight="700">Your machine</text><rect x="40" y="410" width="210" height="170" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="40" cy="410" r="14" fill="var(--accent)"/><text x="40" y="416" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">1</text><text x="145" y="446" text-anchor="middle" fill="var(--heading)" font-size="18" font-weight="700">Ingest</text><text x="145" y="494" text-anchor="middle" fill="var(--heading)" font-size="32" font-weight="400">🏥 🚗 ✈️</text><text x="145" y="526" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">FDA · NHTSA · NASA</text><text x="145" y="554" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">MiniLM embeds them</text><rect x="640" y="380" width="340" height="210" rx="16" fill="var(--code-bg)" stroke="var(--muted)" stroke-width="2"/><text x="660" y="408" text-anchor="start" fill="var(--heading)" font-size="20" font-weight="700">Atlas cluster · AWS</text><rect x="665" y="425" width="290" height="145" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><g data-center-x="810"><image href="img/mongodb-icon.svg" x="728" y="454" width="14.1" height="30"/><text x="820" y="477" text-anchor="middle" fill="var(--heading)" font-size="20" font-weight="700">Vector Search</text></g><text x="810" y="507" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">embeddings, metadata,</text><text x="810" y="529" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">provenance</text><path d="M520 490 L636 490" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="578" y="478" text-anchor="middle" fill="var(--accent)" font-size="15" font-weight="400">upsert</text><text x="578" y="512" text-anchor="middle" fill="var(--accent)" font-size="15" font-weight="400">records</text></g>
+<g class="fragment" data-fragment-index="2"><rect x="250" y="20" width="520" height="280" rx="16" fill="var(--code-bg)" stroke="var(--muted)" stroke-width="2"/><text x="270" y="42" text-anchor="start" fill="var(--heading)" font-size="19" font-weight="700">Atlas Agent Engine (managed)</text><rect x="270" y="410" width="230" height="170" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="270" cy="410" r="14" fill="var(--accent)"/><text x="270" y="416" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">2</text><text x="385" y="454" text-anchor="middle" fill="var(--heading)" font-size="18" font-weight="700">Package</text><text x="385" y="490" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="400">Maven jars</text><g data-center-x="385"><path transform="translate(304 498) scale(0.917)" fill="var(--heading)" d="M1.4446 11.5059c0 1.1021.1673 2.1585.4847 3.1563-.0378-.0028-.0691-.0058-.1058-.0058-.4209 0-.8015.16-1.0704.4512-.3454.3737-.4984.8335-.4316 1.293a1.576 1.576 0 0 0 .2148.5978c-.2319.1864-.4018.4456-.4844.7578-.0646.2448-.131.7543.2149 1.2794a1.4552 1.4552 0 0 0-.0625.1055c-.208.3923-.2207.8372-.0371 1.25.2783.6258.9696 1.1175 2.3126 1.6467.8356.3292 1.5988.5411 1.6056.543 1.1046.2847 2.104.4277 2.969.4277 1.4173 0 2.4754-.3849 3.1525-1.1446 1.538.2651 2.791.1403 3.592.006.6773.7555 1.7332 1.1387 3.1467 1.1387.8649 0 1.8643-.143 2.969-.4278.0068-.0019.77-.2138 1.6056-.543 1.343-.5292 2.0343-1.0208 2.3126-1.6466.1836-.4129.171-.8577-.037-1.25a1.4685 1.4685 0 0 0-.0626-.1056c.346-.525.2795-1.0346.2149-1.2793-.0826-.3122-.2525-.5714-.4844-.7579.11-.1816.1831-.3788.2148-.5977.0669-.4595-.0862-.9193-.4316-1.293-.2688-.2913-.6495-.4513-1.0704-.4513-.0209 0-.0376.0008-.0588.0018.3162-.9966.4846-2.0518.4846-3.1523 0-5.807-4.7362-10.5144-10.5789-10.5144-5.8426 0-10.5788 4.7073-10.5788 10.5144Zm10.5788-9.4831c5.2727 0 9.5476 4.246 9.5476 9.483a9.4201 9.4201 0 0 1-.2696 2.2365c-.0039-.0047-.0079-.011-.0117-.0156-.274-.3255-.6679-.5059-1.1075-.5059-.352 0-.714.1155-1.0763.3438-.2403.1517-.5058.422-.7793.7598-.2534-.3492-.608-.5832-1.0137-.6465a1.5174 1.5174 0 0 0-.2344-.0176c-.9263 0-1.4828.7993-1.6935 1.5177-.1046.2426-.6065 1.3482-1.3614 2.0978-1.1681 1.1601-1.4458 2.3534-.8396 3.6382-.843.1029-1.5836.0927-2.365-.006.5906-1.212.3626-2.4388-.8426-3.6322-.755-.7496-1.2568-1.8552-1.3614-2.0978-.2107-.7184-.7673-1.5177-1.6935-1.5177-.078 0-.1568.0054-.2344.0176-.4057.0633-.7604.2973-1.0137.6465-.2735-.3379-.539-.6081-.7794-.7598-.3622-.2283-.7243-.3438-1.0762-.3438-.4266 0-.8094.171-1.0821.4786a9.4208 9.4208 0 0 1-.2598-2.1936c0-5.237 4.2749-9.483 9.5475-9.483zM8.6443 7.0036c-.4838.0043-.9503.2667-1.1934.7227-.3536.6633-.1006 1.4873.5645 1.84.351.1862.4883-.5261.836-.6485.3107-.1095.841.399 1.0078.086.3536-.6634.1025-1.4874-.5625-1.84a1.3659 1.3659 0 0 0-.6524-.1602Zm6.8403 0c-.2199-.002-.4426.05-.6504.1602-.665.3526-.9181 1.1766-.5645 1.84.1669.313.6971-.1955 1.0079-.086.3476.1224.4867.8347.838.6485.6649-.3527.916-1.1767.5624-1.84-.243-.456-.7096-.7184-1.1934-.7227Zm-9.7565 1.418a.8768.8768 0 0 0-.877.877c0 .4846.3925.877.877.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zm12.6434 0c-.4845 0-.879.3925-.879.877 0 .4846.3945.877.879.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zM8.7927 11.459c-.179-.003-.2793.1107-.2793.416 0 .8097.3874 2.125 1.4279 2.924.207-.7123 1.3453-1.2832 1.5079-1.2012.2315.1167.2191.4417.6074.7266.3884-.285.374-.6098.6056-.7266.1627-.082 1.3009.4889 1.5079 1.2012 1.0404-.799 1.4278-2.1144 1.4278-2.924 0-1.2212-1.583.6402-3.5413.6485-1.4686-.0061-2.7266-1.0558-3.2639-1.0645zM4.312 14.4768c.5792.365 1.6964 2.2751 2.1056 3.0177.1371.2488.371.3536.582.3536.4188 0 .7465-.4138.0391-.9395-1.0636-.791-.6914-2.0846-.1836-2.1642a.4302.4302 0 0 1 .0664-.004c.4616 0 .666.7892.666.7892s.5959 1.4898 1.6213 2.508c.942.9356 1.062 1.703.4961 2.6661-.0164-.004-.0159.0236-.1484.2149-.1853.2673-.4322.4688-.7188.6152-.5062.2269-1.1397.2696-1.7833.2696-1.037 0-2.1017-.1824-2.6975-.336-.0293-.0075-3.6505-.9567-3.1916-1.8224.0771-.1454.2033-.2031.3633-.2031.6463 0 1.823.9551 2.3283.9551.113 0 .196-.0865.2285-.2031.2249-.8045-3.2787-1.0522-2.9846-2.1642.0519-.1967.193-.2757.3907-.2754.854 0 2.7704 1.4923 3.172 1.4923.0307 0 .0525-.0085.0645-.0274.2012-.3227.1096-.5865-1.3087-1.4395-1.4182-.8533-2.4315-1.329-1.8653-1.9416.0651-.0707.1574-.1015.2695-.1015.8611.0002 2.8948 1.84 2.8948 1.84s.5487.5683.8809.5683c.0762 0 .1416-.0315.1855-.1054.2355-.3946-2.1858-2.2183-2.3224-2.971-.0926-.51.0641-.7676.3555-.7676-.0006.008.1701-.0285.4942.1759zm16.2257.5918c-.1366.7526-2.5579 2.5764-2.3224 2.9709.044.074.1092.1055.1855.1055.3321 0 .881-.5684.881-.5684s2.0336-1.8397 2.8947-1.84c.1121 0 .2044.0308.2695.1016.5662.6125-.447 1.0882-1.8653 1.9415-1.4183.853-1.51 1.1168-1.3087 1.4396.012.0188.0337.0273.0644.0273.4016 0 2.3181-1.4923 3.1721-1.4923.1977-.0002.3388.0787.3907.2754.294 1.112-3.2095 1.3597-2.9846 2.1642.0325.1166.1156.2032.2285.2032.5054 0 1.682-.9552 2.3283-.9552.16 0 .2862.0577.3633.2032.459.8656-3.1623 1.8149-3.1916 1.8224-.5958.1535-1.6605.336-2.6975.336-.6351 0-1.261-.0409-1.7638-.2599-.2949-.1472-.5488-.3516-.7383-.625-.0411-.0682-.1026-.1476-.1426-.205-.5726-.9679-.455-1.7371.4903-2.676 1.0254-1.0182 1.6212-2.508 1.6212-2.508s.2044-.7891.666-.7891a.4318.4318 0 0 1 .0665.0039c.5078.0796.88 1.3732-.1836 2.1642-.7074.5257-.3797.9395.039.9395.211 0 .445-.1047.5821-.3535.4092-.7426 1.5264-2.6527 2.1056-3.0178.5588-.3524.99-.1816.8497.5918z"/><text x="385" y="516" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="400">+ int8 MiniLM</text></g><text x="385" y="542" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="400">under 50 MiB</text><path d="M390 370 L390 304" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="402" y="346" text-anchor="start" fill="var(--accent)" font-size="15" font-weight="400">source archive</text></g>
+<g class="fragment" data-fragment-index="3"><rect x="270" y="60" width="210" height="220" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 5"/><circle cx="270" cy="60" r="14" fill="var(--accent)"/><text x="270" y="66" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">3</text><text x="375" y="88" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="700">Agent sandbox</text><rect x="285" y="110" width="80" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><image href="img/python.svg" x="313" y="118" width="24" height="24"/><text x="325" y="158" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">Python</text><text x="325" y="174" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">shim</text><rect x="385" y="110" width="80" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><image href="img/java.svg" x="416" y="118" width="17.8" height="24"/><text x="425" y="158" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">Java</text><text x="425" y="174" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">runner</text><path d="M366 145 L383 145" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)"/><text x="375" y="214" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">execs the JVM</text></g>
+<g class="fragment" data-fragment-index="4"><rect x="500" y="110" width="100" height="90" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="500" cy="110" r="14" fill="var(--accent)"/><text x="500" y="116" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">4</text><image href="img/mongodb-icon.svg" x="543" y="120" width="15.0" height="32"/><text x="550" y="176" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">Orchestration</text><text x="550" y="192" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">Engine</text><path d="M466 145 L498 145" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)" stroke-dasharray="5 4"/><text x="520" y="230" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">model and</text><text x="520" y="246" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">tool calls</text></g>
+<g class="fragment" data-fragment-index="5"><rect x="620" y="60" width="130" height="220" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 5"/><circle cx="620" cy="60" r="14" fill="var(--accent)"/><text x="620" y="66" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">5</text><text x="685" y="88" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="700">Tool sandbox</text><rect x="635" y="105" width="100" height="60" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><image href="img/java.svg" x="676" y="110" width="17.8" height="24"/><text x="685" y="152" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">Java tools</text><rect x="635" y="205" width="100" height="60" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><path transform="translate(673 208) scale(1.000)" fill="var(--heading)" d="M23.0325 11.2963c-.0503 0-.1006 0-.1508.0126l-4.021-7.4387c.0754-.1383.1131-.289.1131-.4524 0-.5403-.4398-.9675-.9675-.9675-.2765 0-.5278.113-.7037.3015L9.286 1.156C9.2357.6785 8.821.3016 8.3184.3016c-.5277 0-.9675.4398-.9675.9675 0 .1634.0377.3141.113.4524l-6.245 8.9591c-.0753-.0251-.1633-.0377-.2513-.0377-.5403 0-.9675.4398-.9675.9676 0 .5403.4398.9675.9675.9675h.0377l3.3676 8.3309c-.0503.1257-.088.2639-.088.402 0 .5404.4398.9676.9676.9676.2764 0 .5277-.113.7036-.3015l10.1152.9926c.1005.4273.49.7288.9424.7288.5403 0 .9676-.4398.9676-.9675 0-.2388-.088-.465-.2262-.6283l5.1141-8.8712c.0503.0126.1005.0126.1634.0126.5403 0 .9675-.4398.9675-.9676 0-.5403-.4272-.98-.9675-.98zM17.2272 4.021c.1131.1508.2765.264.4524.3267l-1.533 11.5728c-.1005.0252-.1885.0503-.2764.1005L7.4513 8.708c.0251-.0754.0377-.1634.0377-.2514 0-.0628-.0126-.1256-.0126-.1884zm4.8754 8.5068l-5.177 3.556a1.105 1.105 0 0 0-.1256-.0753L18.3455 4.335h.0126l3.9456 7.288c-.1508.1759-.2388.3895-.2388.6408 0 .1005.0126.1885.0377.2638zM6.3832 7.5016c-.4649.0754-.8293.4775-.8293.955v.0628l-3.4555 2.0481 5.378-7.7026zm.3519 1.91c.1256-.0252.2513-.088.3518-.1634l8.356 7.2628c-.0377.113-.0628.2262-.0628.3518v.0503l-9.311 3.845c-.1382-.201-.3518-.3518-.6031-.402zm8.8963 8.1172c.1257.1382.3016.2513.5026.289l.465 4.046c-.201.1006-.3519.264-.4524.4524l-9.8136-.955zm1.1435.2136c.3267-.1633.5403-.49.5403-.867 0-.088-.0126-.1634-.0377-.2513l4.7372-3.2545-4.8 8.331zm.2513-14.3497l-9.889 4.31-.1131-.0755 1.2565-5.3906h.0377c.3393 0 .6409-.1759.8168-.4397l7.891 1.5706zM1.935 11.6105c0-.0629-.0126-.1257-.0126-.1885l3.9079-2.2995c.0754.0754.1633.1508.2638.201L4.8252 20.243l-3.2043-7.9036c.1885-.176.3142-.4398.3142-.7288Z"/><text x="685" y="247" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">ONNX</text><text x="685" y="262" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">MiniLM int8</text><path d="M685 166 L685 203" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)"/><path d="M601 150 L633 135" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)"/><rect x="860" y="115" width="120" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><path transform="translate(907 120) scale(1.083)" fill="var(--heading)" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/><text x="920" y="162" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="700">OpenAI</text><text x="920" y="180" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">chat model</text><path d="M770 150 L856 150" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="813" y="134" text-anchor="middle" fill="var(--accent)" font-size="14" font-weight="400">chat</text><text x="813" y="176" text-anchor="middle" fill="var(--accent)" font-size="14" font-weight="400">completions</text><path d="M690 300 L690 378" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="702" y="346" text-anchor="start" fill="var(--accent)" font-size="15" font-weight="400">$vectorSearch</text></g>
+<g class="fragment" data-fragment-index="6"><rect x="40" y="60" width="150" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="40" cy="60" r="14" fill="var(--accent)"/><text x="40" y="66" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">6</text><text x="115" y="103" text-anchor="middle" fill="var(--heading)" font-size="20" font-weight="700">🧑 Caller</text><path d="M190 95 L246 95" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="218" y="84" text-anchor="middle" fill="var(--accent)" font-size="15" font-weight="400">invoke</text></g>
+<g class="fragment" data-fragment-index="7"><rect x="48" y="537" width="194" height="26" rx="6" fill="var(--accent-soft)"/><text x="145" y="555" text-anchor="middle" fill="var(--accent)" font-size="15" font-weight="700">or: Voyage AI embeds</text><rect x="282" y="494" width="206" height="30" rx="6" fill="var(--accent-soft)"/><text x="385" y="516" text-anchor="middle" fill="var(--accent)" font-size="16" font-weight="700">or: no model inside</text><rect x="635" y="205" width="100" height="60" rx="12" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/><text x="685" y="232" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Voyage AI</text><text x="685" y="252" text-anchor="middle" fill="#fff" font-size="13" font-weight="400">on Atlas</text></g>
+</svg>
+<ul style="flex: 1; list-style: none; font-size: 0.48em; text-align: left; margin: 0; padding: 0"><li class="fragment" data-fragment-index="1" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">1</span><strong>Ingest</strong>: embed the public reports and upsert them into Atlas</li><li class="fragment" data-fragment-index="2" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">2</span><strong>Package</strong>: bundle the jars and an int8 model under 50 MiB</li><li class="fragment" data-fragment-index="3" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">3</span><strong>The stowaway</strong>: start the Java runner from a Python shim</li><li class="fragment" data-fragment-index="4" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">4</span><strong>The Orchestration Engine</strong>: approve every model and tool call</li><li class="fragment" data-fragment-index="5" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">5</span><strong>Java tools</strong>: embed the query, run the vector search and call the model</li><li class="fragment" data-fragment-index="6" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">6</span><strong>The caller</strong>: invoke the agent</li><li class="fragment" data-fragment-index="7" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">✨</span><strong>Or flip one switch</strong>: Voyage AI on Atlas does the embedding</li></ul>
+</div>
+
+Note: The happy ending first, Disney style: this is what runs at the end of the talk. Don't explain every box, each one gets its chapter. One piece at a time, with arrows between the big boxes in the theme colour. 1: the three public report sets are embedded in Java and upserted into the Atlas cluster. 2: the package, with the int8 model, goes up as a source archive under the 50 MiB limit. 3: the stowaway, a Python shim that starts the Java runner. 4: the Orchestration Engine approves every model and tool call. 5: the Java tools run the vector search and call the model. 6: a caller invokes it all. 7: the option MongoDB suggested, one environment variable away: Voyage AI on Atlas does the embedding, so it becomes an API call and the model leaves the package. The runs shown in this talk used MiniLM; say so.
+
+---
+
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 1</span>Dude, where's my Java SDK?</span>
 
-Note: 1:00. Section 1, about 1 minute.
+Note: 6:30. Section 1, about 2 minutes.
 
 --
 
@@ -123,7 +275,9 @@ Note: The platform was announced on September 29, 2026. This is the public press
 <div class="sales-band fragment"><span class="sales-line">Shut up with the sales pitch.</span><span class="sales-line fragment">Boxes tell me nothing. I want to <em>try</em> it.</span></div>
 </div>
 
-Note: The platform's architecture, redrawn from the overview diagram. Everything this talk touches sits in the middle: the agent runtime and its state and memory. Click: the audience's inner voice. Click again for the second line. Alternates if you want to ad-lib: "shut up and take my money", "I want to try this, not hear about it", "every deck has this slide".
+<p class="small" style="margin-top: 0.4em">⚠️ Atlas Agent Engine is in <strong>public preview</strong>: not yet recommended for production.</p>
+
+Note: Say the preview status out loud: it is public preview and MongoDB does not recommend it for production yet. The platform's architecture, redrawn from the overview diagram. Everything this talk touches sits in the middle: the agent runtime and its state and memory. Click: the audience's inner voice. Click again for the second line. Alternates if you want to ad-lib: "shut up and take my money", "I want to try this, not hear about it", "every deck has this slide".
 
 --
 
@@ -136,6 +290,7 @@ Note: The product's front door. "Deploying enterprise agents has never been easi
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Python SDK: 200 ✅
 
 <a href="https://www.mongodb.com/docs/agentengine/sdk/python/" target="_blank" rel="noopener"><img src="img/captures/sdk-python.png" alt="The MongoDB docs page for the Python SDKs: Atlas Agent Engine Python SDKs, with LangGraph, ADK and memory packages" style="max-height: 470px"></a>
@@ -171,10 +326,11 @@ Error: unsupported language/framework combination "java-none"
 
 This talk is about this error message. <!-- .element: class="fragment" -->
 
-Note: 0:30. Cold open. Let it sit for a second, then click for the arrow, and once more for the line below. "We'll get here in about ten minutes. First, how we got to the point of being rejected."
+Note: 0:30. Cold open. Let it sit for a second, then click for the arrow, and once more for the line below. "We'll get back here in chapter 6. First, how we got to the point of being rejected."
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### The repo has no Java
 
 <pre class="plain"><a href="https://github.com/mongodb/agent-engine-client-libraries">agent-engine-client-libraries</a>
@@ -204,7 +360,7 @@ Note: The plan, in layers: standalone pieces first, the undocumented runner late
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 2</span>But it works on my machine</span>
 
-Note: 1:30. Section 2, about 2 minutes. The first contact with a real server.
+Note: 8:30. Section 2, about 3 minutes. The first contact with a real server.
 
 --
 
@@ -259,6 +415,7 @@ Note: One block from the SDK's models, side by side. The zod schema becomes a re
 
 --
 
+<!-- .slide: data-skippable="true" -->
 <div class="track">
 <span class="step">core SDK</span><span class="arrow">→</span><span class="step here">memory</span><span class="arrow">→</span><span class="step">LangChain4j</span><span class="arrow">→</span><span class="step">runner</span><span class="arrow">→</span><span class="step">LangGraph4j</span><span class="arrow">→</span><span class="step cloud">☁️</span>
 </div>
@@ -422,8 +579,8 @@ Note: First guess was right: a key on the free tier gets 3 requests a minute. Th
 
 ### The fix
 
-<div class="flow" style="font-size: 0.85em">
-<span class="pill bad">❌ Rate limit exceeded</span><span class="fragment"><span class="arrow">→</span><span class="pill">💳 Payment method added</span></span><span class="fragment"><span class="arrow">→</span><span class="pill good">✅ Semantic search works</span></span>
+<div class="flow auto" style="font-size: 0.85em">
+<span style="--i:0"><span class="pill bad">❌ Rate limit exceeded</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill">💳 Payment method added</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill good">✅ Semantic search works</span></span>
 </div>
 
 <p class="fragment" style="font-size: 1.3em">Read the log before you theorize.</p>
@@ -435,7 +592,7 @@ Note: Adding a payment method lifted the limit. The docs described the paid tier
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 3</span>Tap the Wire</span>
 
-Note: 3:30. Section 3, about 2 minutes. How do agents actually run?
+Note: 11:30. Section 3, about 3 minutes. How do agents actually run?
 
 --
 
@@ -454,9 +611,9 @@ Note: 3:30. Section 3, about 2 minutes. How do agents actually run?
 
 Note: Stage 3, in one breath: a LangChain4j chat model serves as the platform's BaseLLM, blocking and streaming, with translators for messages and tool schemas. 45 offline tests, then 6 live ones against the real OpenAI API: text, usage, streaming, tool calls, a tool result flowing back, early stream close. The models are the easy part. Now the one nobody documented.
 
-
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Any model, one adapter
 
 <p class="filename">📄 LangChain4jLiveTest.java</p>
@@ -497,12 +654,13 @@ Note: The full sentence: "The Atlas Agent Engine imports the agent inside the sa
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### The way in
 
 <p class="big">Then how do they talk? 🤔</p>
 
-<div class="flow">
-<span class="pill">📖 The docs</span><span class="fragment"><span class="arrow">→</span><span class="pill">🐍 The Python runner</span></span><span class="fragment"><span class="arrow">→</span><span class="pill good">👀 Real traffic</span></span>
+<div class="flow auto">
+<span style="--i:0"><span class="pill">📖 The docs</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill">🐍 The Python runner</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill good">👀 Real traffic</span></span>
 </div>
 
 Note: Three steps. Read the docs: done, that was the quote. Read the Python runner, which is the part that isn't public. Then watch real traffic between the pieces.
@@ -553,6 +711,7 @@ Note: `agentengine dev up` generates a compose file: the Orchestration Engine is
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Swap one container
 
 The local stack's Orchestration Engine is a **public image**. Swap one container:
@@ -569,6 +728,7 @@ Note: A compose override: replace the app, drop the base file's build section an
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Watching the baseline
 
 <div class="error">
@@ -670,14 +830,14 @@ Note: Slice 1 of the runner: two JDK HttpServers, no web framework, a launcher t
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 4</span>Graphs, Threads and Amnesia</span>
 
-Note: 5:30. Section 4, about 3 minutes. LangGraph4j, memory and human-in-the-loop. Three problems, one per bullet on the next slide.
+Note: 14:30. Section 4, about 4 minutes. LangGraph4j, memory and human-in-the-loop. Three problems, one per bullet on the next slide.
 
 --
 
 ### An agent as a graph
 
-<div class="flow">
-<span class="pill">🟢 START</span><span class="fragment"><span class="arrow">→</span><span class="pill">🤖 agent</span></span><span class="fragment"><span class="arrow">⇄</span><span class="pill">🔧 tools</span></span><span class="fragment"><span class="arrow">→</span><span class="pill good">🏁 END</span></span>
+<div class="flow auto">
+<span style="--i:0"><span class="pill">🟢 START</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill">🤖 agent</span></span><span style="--i:2"><span class="arrow">⇄</span><span class="pill">🔧 tools</span></span><span style="--i:3"><span class="arrow">→</span><span class="pill good">🏁 END</span></span>
 </div>
 
 <blockquote class="fragment" style="font-size: 0.8em">"<em>nodes do the work, edges tell what to do next</em>."<br><span class="small">— <a href="https://docs.langchain.com/oss/python/langgraph/graph-api#graphs">LangGraph docs, Graph API › Graphs</a></span></blockquote>
@@ -688,7 +848,7 @@ Note: 5:30. Section 4, about 3 minutes. LangGraph4j, memory and human-in-the-loo
 <li class="fragment">⏸️ <strong>Pauses</strong>: a human decides when the graph resumes</li>
 </ol>
 
-Note: A LangGraph4j agent is a graph. The agent node calls the model, the tools node runs what the model asks for, and they loop until the model is done. The state travels along and is checkpointed after every node. Three features, three problems: threads, checkpoints and pauses.
+Note: The graph draws itself when the slide opens. A LangGraph4j agent is a graph. The agent node calls the model, the tools node runs what the model asks for, and they loop until the model is done. The state travels along and is checkpointed after every node. Three features, three problems: threads, checkpoints and pauses.
 
 --
 
@@ -821,6 +981,7 @@ Note: The checkpointer I used lives in memory, so memory survives turns but not 
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Issue #492: a MongoDB saver
 
 <a href="https://github.com/langgraph4j/langgraph4j/issues/492" target="_blank" rel="noopener"><img src="img/captures/langgraph4j-issue.png" alt="GitHub issue 492 on langgraph4j: Add MongoDB checkpoint saver" style="max-height: 470px"></a>
@@ -843,8 +1004,8 @@ Note: The PR closes the issue. Two collections, one for threads and one for chec
 
 ### Problem #5: The resume decision is nested
 
-<div class="flow">
-<span class="pill">🛑 Suspend</span><span class="fragment"><span class="arrow">→</span><span class="pill">⏳ OE waits</span></span><span class="fragment"><span class="arrow">→</span><span class="pill">🧑 Human approves</span></span><span class="fragment"><span class="arrow">→</span><span class="pill good">▶️ OE redispatches</span></span>
+<div class="flow auto">
+<span style="--i:0"><span class="pill">🛑 Suspend</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill">⏳ OE waits</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill">🧑 Human approves</span></span><span style="--i:3"><span class="arrow">→</span><span class="pill good">▶️ OE redispatches</span></span>
 </div>
 
 ```java
@@ -902,78 +1063,9 @@ Note: The agent gets back exactly what the reviewer sent, under the key of the r
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
-## <span class="divider-title"><span class="chapter">Chapter 5</span>Near Miss</span>
+## <span class="divider-title"><span class="chapter">Chapter 5</span>Reports, Not Findings</span>
 
-Note: 8:30. Section 5, about 3 minutes. The demo: Near Miss.
-
---
-
-### What's a near miss?
-
-<p class="big">near miss</p>
-
-<p class="fragment" style="font-size: 1.1em"><em>noun</em> · an incident that nearly became an accident</p>
-
-<div class="flow">
-<span class="fragment"><span class="pill bad">⚠️ Close call</span></span><span class="fragment"><span class="arrow">→</span><span class="pill">📝 Someone reports it</span></span><span class="fragment"><span class="arrow">→</span><span class="pill good">🔎 An agent finds it</span></span>
-</div>
-
-Note: An aviation term, and the name of the demo. Real public safety reports, searched by an agent. High stakes on purpose: it forces the agent to be careful about what it claims.
-
---
-
-### Where the reports come from
-
-<svg viewBox="0 0 1000 410" role="img" aria-label="Three public sources, FDA MAUDE, NHTSA and NASA ASRS, are embedded by MiniLM in Java and stored in one Atlas Vector Search index" style="width:100%;max-height:520px">
-<defs><marker id="wa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker></defs>
-<rect x="20" y="30" width="290" height="100" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="62" y="92" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="38">🏥</text><text x="104" y="68" text-anchor="start" font-weight="700" fill="var(--heading)" font-size="20">FDA MAUDE</text><text x="104" y="92" text-anchor="start" font-weight="400" fill="var(--heading)" font-size="15">medical device reports</text><text x="104" y="114" text-anchor="start" font-weight="500" fill="var(--muted)" font-size="14" font-family="var(--r-code-font)">openFDA API</text><rect x="20" y="160" width="290" height="100" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="62" y="222" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="38">🚗</text><text x="104" y="198" text-anchor="start" font-weight="700" fill="var(--heading)" font-size="20">NHTSA</text><text x="104" y="222" text-anchor="start" font-weight="400" fill="var(--heading)" font-size="15">vehicle complaints</text><text x="104" y="244" text-anchor="start" font-weight="500" fill="var(--muted)" font-size="14" font-family="var(--r-code-font)">complaints API</text><rect x="20" y="290" width="290" height="100" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><text x="62" y="352" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="38">✈️</text><text x="104" y="328" text-anchor="start" font-weight="700" fill="var(--heading)" font-size="20">NASA ASRS</text><text x="104" y="352" text-anchor="start" font-weight="400" fill="var(--heading)" font-size="15">aviation safety reports</text><text x="104" y="374" text-anchor="start" font-weight="500" fill="var(--muted)" font-size="14" font-family="var(--r-code-font)">report-set PDFs</text>
-<g class="fragment"><path d="M312 80 C 370 80, 360 185, 416 185" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><path d="M312 210 L 416 210" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><path d="M312 340 C 370 340, 360 235, 416 235" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><text x="364" y="200" text-anchor="middle" font-weight="600" fill="var(--accent)" font-size="15">text</text><rect x="420" y="135" width="230" height="150" rx="14" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><path transform="translate(467 152) scale(1.167)" fill="var(--heading)" d="M1.4446 11.5059c0 1.1021.1673 2.1585.4847 3.1563-.0378-.0028-.0691-.0058-.1058-.0058-.4209 0-.8015.16-1.0704.4512-.3454.3737-.4984.8335-.4316 1.293a1.576 1.576 0 0 0 .2148.5978c-.2319.1864-.4018.4456-.4844.7578-.0646.2448-.131.7543.2149 1.2794a1.4552 1.4552 0 0 0-.0625.1055c-.208.3923-.2207.8372-.0371 1.25.2783.6258.9696 1.1175 2.3126 1.6467.8356.3292 1.5988.5411 1.6056.543 1.1046.2847 2.104.4277 2.969.4277 1.4173 0 2.4754-.3849 3.1525-1.1446 1.538.2651 2.791.1403 3.592.006.6773.7555 1.7332 1.1387 3.1467 1.1387.8649 0 1.8643-.143 2.969-.4278.0068-.0019.77-.2138 1.6056-.543 1.343-.5292 2.0343-1.0208 2.3126-1.6466.1836-.4129.171-.8577-.037-1.25a1.4685 1.4685 0 0 0-.0626-.1056c.346-.525.2795-1.0346.2149-1.2793-.0826-.3122-.2525-.5714-.4844-.7579.11-.1816.1831-.3788.2148-.5977.0669-.4595-.0862-.9193-.4316-1.293-.2688-.2913-.6495-.4513-1.0704-.4513-.0209 0-.0376.0008-.0588.0018.3162-.9966.4846-2.0518.4846-3.1523 0-5.807-4.7362-10.5144-10.5789-10.5144-5.8426 0-10.5788 4.7073-10.5788 10.5144Zm10.5788-9.4831c5.2727 0 9.5476 4.246 9.5476 9.483a9.4201 9.4201 0 0 1-.2696 2.2365c-.0039-.0047-.0079-.011-.0117-.0156-.274-.3255-.6679-.5059-1.1075-.5059-.352 0-.714.1155-1.0763.3438-.2403.1517-.5058.422-.7793.7598-.2534-.3492-.608-.5832-1.0137-.6465a1.5174 1.5174 0 0 0-.2344-.0176c-.9263 0-1.4828.7993-1.6935 1.5177-.1046.2426-.6065 1.3482-1.3614 2.0978-1.1681 1.1601-1.4458 2.3534-.8396 3.6382-.843.1029-1.5836.0927-2.365-.006.5906-1.212.3626-2.4388-.8426-3.6322-.755-.7496-1.2568-1.8552-1.3614-2.0978-.2107-.7184-.7673-1.5177-1.6935-1.5177-.078 0-.1568.0054-.2344.0176-.4057.0633-.7604.2973-1.0137.6465-.2735-.3379-.539-.6081-.7794-.7598-.3622-.2283-.7243-.3438-1.0762-.3438-.4266 0-.8094.171-1.0821.4786a9.4208 9.4208 0 0 1-.2598-2.1936c0-5.237 4.2749-9.483 9.5475-9.483zM8.6443 7.0036c-.4838.0043-.9503.2667-1.1934.7227-.3536.6633-.1006 1.4873.5645 1.84.351.1862.4883-.5261.836-.6485.3107-.1095.841.399 1.0078.086.3536-.6634.1025-1.4874-.5625-1.84a1.3659 1.3659 0 0 0-.6524-.1602Zm6.8403 0c-.2199-.002-.4426.05-.6504.1602-.665.3526-.9181 1.1766-.5645 1.84.1669.313.6971-.1955 1.0079-.086.3476.1224.4867.8347.838.6485.6649-.3527.916-1.1767.5624-1.84-.243-.456-.7096-.7184-1.1934-.7227Zm-9.7565 1.418a.8768.8768 0 0 0-.877.877c0 .4846.3925.877.877.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zm12.6434 0c-.4845 0-.879.3925-.879.877 0 .4846.3945.877.879.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zM8.7927 11.459c-.179-.003-.2793.1107-.2793.416 0 .8097.3874 2.125 1.4279 2.924.207-.7123 1.3453-1.2832 1.5079-1.2012.2315.1167.2191.4417.6074.7266.3884-.285.374-.6098.6056-.7266.1627-.082 1.3009.4889 1.5079 1.2012 1.0404-.799 1.4278-2.1144 1.4278-2.924 0-1.2212-1.583.6402-3.5413.6485-1.4686-.0061-2.7266-1.0558-3.2639-1.0645zM4.312 14.4768c.5792.365 1.6964 2.2751 2.1056 3.0177.1371.2488.371.3536.582.3536.4188 0 .7465-.4138.0391-.9395-1.0636-.791-.6914-2.0846-.1836-2.1642a.4302.4302 0 0 1 .0664-.004c.4616 0 .666.7892.666.7892s.5959 1.4898 1.6213 2.508c.942.9356 1.062 1.703.4961 2.6661-.0164-.004-.0159.0236-.1484.2149-.1853.2673-.4322.4688-.7188.6152-.5062.2269-1.1397.2696-1.7833.2696-1.037 0-2.1017-.1824-2.6975-.336-.0293-.0075-3.6505-.9567-3.1916-1.8224.0771-.1454.2033-.2031.3633-.2031.6463 0 1.823.9551 2.3283.9551.113 0 .196-.0865.2285-.2031.2249-.8045-3.2787-1.0522-2.9846-2.1642.0519-.1967.193-.2757.3907-.2754.854 0 2.7704 1.4923 3.172 1.4923.0307 0 .0525-.0085.0645-.0274.2012-.3227.1096-.5865-1.3087-1.4395-1.4182-.8533-2.4315-1.329-1.8653-1.9416.0651-.0707.1574-.1015.2695-.1015.8611.0002 2.8948 1.84 2.8948 1.84s.5487.5683.8809.5683c.0762 0 .1416-.0315.1855-.1054.2355-.3946-2.1858-2.2183-2.3224-2.971-.0926-.51.0641-.7676.3555-.7676-.0006.008.1701-.0285.4942.1759zm16.2257.5918c-.1366.7526-2.5579 2.5764-2.3224 2.9709.044.074.1092.1055.1855.1055.3321 0 .881-.5684.881-.5684s2.0336-1.8397 2.8947-1.84c.1121 0 .2044.0308.2695.1016.5662.6125-.447 1.0882-1.8653 1.9415-1.4183.853-1.51 1.1168-1.3087 1.4396.012.0188.0337.0273.0644.0273.4016 0 2.3181-1.4923 3.1721-1.4923.1977-.0002.3388.0787.3907.2754.294 1.112-3.2095 1.3597-2.9846 2.1642.0325.1166.1156.2032.2285.2032.5054 0 1.682-.9552 2.3283-.9552.16 0 .2862.0577.3633.2032.459.8656-3.1623 1.8149-3.1916 1.8224-.5958.1535-1.6605.336-2.6975.336-.6351 0-1.261-.0409-1.7638-.2599-.2949-.1472-.5488-.3516-.7383-.625-.0411-.0682-.1026-.1476-.1426-.205-.5726-.9679-.455-1.7371.4903-2.676 1.0254-1.0182 1.6212-2.508 1.6212-2.508s.2044-.7891.666-.7891a.4318.4318 0 0 1 .0665.0039c.5078.0796.88 1.3732-.1836 2.1642-.7074.5257-.3797.9395.039.9395.211 0 .445-.1047.5821-.3535.4092-.7426 1.5264-2.6527 2.1056-3.0178.5588-.3524.99-.1816.8497.5918z"/><path transform="translate(521 152) scale(1.167)" fill="var(--heading)" d="M23.0325 11.2963c-.0503 0-.1006 0-.1508.0126l-4.021-7.4387c.0754-.1383.1131-.289.1131-.4524 0-.5403-.4398-.9675-.9675-.9675-.2765 0-.5278.113-.7037.3015L9.286 1.156C9.2357.6785 8.821.3016 8.3184.3016c-.5277 0-.9675.4398-.9675.9675 0 .1634.0377.3141.113.4524l-6.245 8.9591c-.0753-.0251-.1633-.0377-.2513-.0377-.5403 0-.9675.4398-.9675.9676 0 .5403.4398.9675.9675.9675h.0377l3.3676 8.3309c-.0503.1257-.088.2639-.088.402 0 .5404.4398.9676.9676.9676.2764 0 .5277-.113.7036-.3015l10.1152.9926c.1005.4273.49.7288.9424.7288.5403 0 .9676-.4398.9676-.9675 0-.2388-.088-.465-.2262-.6283l5.1141-8.8712c.0503.0126.1005.0126.1634.0126.5403 0 .9675-.4398.9675-.9676 0-.5403-.4272-.98-.9675-.98zM17.2272 4.021c.1131.1508.2765.264.4524.3267l-1.533 11.5728c-.1005.0252-.1885.0503-.2764.1005L7.4513 8.708c.0251-.0754.0377-.1634.0377-.2514 0-.0628-.0126-.1256-.0126-.1884zm4.8754 8.5068l-5.177 3.556a1.105 1.105 0 0 0-.1256-.0753L18.3455 4.335h.0126l3.9456 7.288c-.1508.1759-.2388.3895-.2388.6408 0 .1005.0126.1885.0377.2638zM6.3832 7.5016c-.4649.0754-.8293.4775-.8293.955v.0628l-3.4555 2.0481 5.378-7.7026zm.3519 1.91c.1256-.0252.2513-.088.3518-.1634l8.356 7.2628c-.0377.113-.0628.2262-.0628.3518v.0503l-9.311 3.845c-.1382-.201-.3518-.3518-.6031-.402zm8.8963 8.1172c.1257.1382.3016.2513.5026.289l.465 4.046c-.201.1006-.3519.264-.4524.4524l-9.8136-.955zm1.1435.2136c.3267-.1633.5403-.49.5403-.867 0-.088-.0126-.1634-.0377-.2513l4.7372-3.2545-4.8 8.331zm.2513-14.3497l-9.889 4.31-.1131-.0755 1.2565-5.3906h.0377c.3393 0 .6409-.1759.8168-.4397l7.891 1.5706zM1.935 11.6105c0-.0629-.0126-.1257-.0126-.1885l3.9079-2.2995c.0754.0754.1633.1508.2638.201L4.8252 20.243l-3.2043-7.9036c.1885-.176.3142-.4398.3142-.7288Z"/><image href="img/java.svg" x="575" y="150" width="23" height="32"/><text x="535" y="222" text-anchor="middle" font-weight="700" fill="var(--heading)" font-size="22">MiniLM</text><text x="535" y="248" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="15">embeds the text</text><text x="535" y="268" text-anchor="middle" font-weight="400" fill="var(--heading)" font-size="15">in Java</text></g>
-<g class="fragment"><path d="M652 210 L 748 210" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><text x="700" y="198" text-anchor="middle" font-weight="600" fill="var(--accent)" font-size="15">vectors</text><rect x="752" y="135" width="230" height="150" rx="14" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/><image href="img/mongodb-icon.svg" x="855" y="148" width="20" height="42"/><text x="867" y="225" text-anchor="middle" font-weight="700" fill="#fff" font-size="22">Atlas</text><text x="867" y="250" text-anchor="middle" font-weight="700" fill="#fff" font-size="18">Vector Search</text><text x="867" y="272" text-anchor="middle" font-weight="400" fill="#fff" font-size="14">one index to rule them all</text></g>
-</svg>
-
-Note: Device adverse events, vehicle complaints and aviation safety reports, from three agencies. One local embedding model, MiniLM, running through ONNX inside the JVM, and one Atlas vector index. Each record is stored with its provenance and licence. The agent has three tools: semantic search, metadata filter and evidence correlation.
-
---
-
-### Search by meaning
-
-<div class="chat">
-<div class="bubble client l fragment fade-up">🧑 "engine lost power during climb"</div>
-</div>
-
-<div class="fragment">
-
-```text
-0.533  M-4, Takeoff / Launch. Pilot flying Maule M4 aircraft
-       reported engine loss of power inflight…
-
-0.479  B737-700, Climb. Air carrier Captain reported an engine
-       failure during climb…
-
-0.42   Aeronca Champion, Commuter and GA Icing Incidents…
-```
-
-</div>
-
-<p class="fragment" style="font-size: 1.1em">Different words, same meaning.</p>
-
-Note: Real output, in memory, no Atlas needed. The three ASRS reports come from three different report sets, and none of them says "lost power during climb" in those words.
-
---
-
-### Same index, other agencies
-
-```text
-> insulin pump delivered too much insulin
-
-0.659  INSULIN PUMP, Injury
-       IT WAS REPORTED THAT CARTRIDGE CHANGE ERRORS OCCURRED
-       WITH MULTIPLE CARTRIDGES DURING THE LOAD SEQUENCE…
-```
-
-<p class="fragment" style="font-size: 1.1em">One box for pumps and planes.</p>
-
-Note: Real result from the in-memory run: a MAUDE report for the pump. The pump and the aeroplane came out of the same index, with one embedding model.
+Note: 18:30. Section 5, about 2 minutes. Back to the Near Miss data: what went wrong in retrieval, and what the agent may claim.
 
 --
 
@@ -1023,6 +1115,7 @@ Note: Only the first chunk of each MAUDE narrative is kept, which is where the r
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Reports, not findings
 
 <p class="filename">📄 NearMissAgent.java · the system prompt</p>
@@ -1050,6 +1143,7 @@ Note: A claim inside a report is relayed only as what the report says. The first
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### When is a connection real?
 
 <div class="flow" style="flex-wrap: wrap">
@@ -1078,6 +1172,7 @@ Note: The question is the one asked of the managed deployment in chapter 7. The 
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### What the tool said
 
 <div class="chat">
@@ -1110,7 +1205,7 @@ Note: Real tool output, trimmed. Both reports mention a sudden loss of power and
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 6</span>The Stowaway Agent</span>
 
-Note: 11:30. Section 6, about 7 minutes. Back to the error from the start, then the workaround, then the five things that broke on the way to a deployed agent. Deployed means nothing until it answers.
+Note: 20:30. Section 6, about 5 minutes. Back to the error from the start, then the workaround, then the five things that broke on the way to a deployed agent. Deployed means nothing until it answers.
 
 --
 
@@ -1135,6 +1230,7 @@ Note: Back to the error from the start. The CLI reads the language and framework
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### No Java, no Maven
 
 <div style="display: table; margin: 0 auto">
@@ -1336,11 +1432,87 @@ Note: The portal lists the first attempt as BUILD FAILED, then the pruned one as
 
 ### The fix
 
-<div class="flow">
-<span class="pill">✂️ Prune other OSes' natives</span><span class="fragment"><span class="arrow">+</span><span class="pill">🔢 An int8 model</span></span><span class="fragment"><span class="arrow">→</span><span class="pill good">✅ 34 MiB</span></span>
+<div class="flow auto">
+<span style="--i:0"><span class="pill">✂️ Prune other OSes' natives</span></span><span style="--i:1"><span class="arrow">+</span><span class="pill">🔢 An int8 model</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill good">✅ 34 MiB</span></span>
 </div>
 
 Note: A generic --prune option in the packager drops the other platforms' natives, and the jar goes to 7 MB. An int8 MiniLM is 23 MB instead of 86, with a different model id so its vectors are never compared with the float32 ones.
+
+--
+
+### Or ship no model at all
+
+<div class="flow auto" style="font-size: 0.9em">
+<span style="--i:0"><span class="pill bad">📦 ONNX jar + MiniLM in the package</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill good">🚢 Voyage AI on Atlas</span></span>
+</div>
+
+<p class="filename">📄 .env</p>
+
+```bash
+NEAR_MISS_TEXT_PROVIDER=voyage
+VOYAGE_API_KEY=…   # the one memory already uses
+```
+
+<p class="fragment">Problem #8 never happens.</p>
+
+<p class="fragment small">Same key as memory. Nothing new to set up.</p>
+
+Note: The suggestion from MongoDB, now a switch in the example: NEAR_MISS_TEXT_PROVIDER=voyage embeds with Voyage AI through Atlas (ai.mongodb.com, voyage-4 by default), records as documents and searches as queries. No ONNX Runtime, no model in the package. It reads VOYAGE_API_KEY, the project secret the memory server already needs, so there is nothing new to configure; the two share its rate limit. Vectors from different models are never compared, so switching means a fresh ingest into a new index (1024 dimensions instead of 384). Problem #2 still applies: a key with no payment method gets 3 requests a minute. Be honest: the transcripts in this talk ran MiniLM. The Voyage path has run for real against the EU endpoint: the live test passes and the full demo ran with it, next slides.
+
+--
+
+<!-- .slide: data-skippable="true" -->
+### Pick a continent
+
+<p class="small" style="margin: 0 0 0.4em">Atlas › Services › AI Model APIs › Model API Keys › Create</p>
+
+<img src="img/captures/atlas-ai-model-api-key-form.png" alt="Atlas: Create Model API Key, named near-miss, cloud provider Any, geography EU (Europe), billed at 1.1x" style="max-height: 440px; border: 1px solid var(--muted); border-radius: 8px">
+
+<p class="fragment small">Europe costs 1.1×. The key shows up once.</p>
+
+Note: Atlas, AI Model APIs, Model API Keys, Create. The geography sets where the requests run and which host the key works on: EU keys only work on eu.ai.mongodb.com. Region-scoped keys need a paid tier, so add a payment method first, which also lifts the 3-requests-a-minute trial limit from Problem #2. The CLI and the Admin API only create Any/Any keys today, so a European key is a UI job. Copy it on the spot: it is shown once.
+
+--
+
+### Kick the tires
+
+<p class="filename">🔑 is the key alive?</p>
+
+```bash
+curl https://eu.ai.mongodb.com/v1/embeddings \
+  -H "Authorization: Bearer $VOYAGE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "voyage-4", "input_type": "query",
+       "input": ["engine lost power during climb"]}'
+```
+
+<div class="fragment">
+
+<p class="filename">☕ the same demo, embedded in Europe</p>
+
+```bash
+NEAR_MISS_TEXT_PROVIDER=voyage \
+NEAR_MISS_VOYAGE_BASE_URL=https://eu.ai.mongodb.com/v1 \
+mvn -pl examples/near-miss exec:java -Dexec.args=demo
+```
+
+</div>
+
+Note: The commands as they ran on October 19. The curl returns a list with one 1024-number embedding (HTTP 200). The demo ingests 720 records, one Voyage call each, about 280 seconds, then runs the searches in memory; no Atlas cluster needed. The output says query_embedding voyage/voyage-4 at eu.ai.mongodb.com. Run from java/ with MAVEN_OPTS="-Xmx4g -XX:-UseSuperWord".
+
+--
+
+### Ask about a car, get a plane
+
+<div class="chat">
+<div class="bubble client l fragment fade-up" style="max-width: 100%">🧑 "car lost power while driving on the highway"</div>
+<div class="bubble err r fragment fade-up">🧮 <strong>MiniLM</strong>, #1: "M-4, Takeoff: engine loss of power inflight" ✈️<small>a Maule</small></div>
+<div class="bubble server r fragment fade-up">🚢 <strong>Voyage</strong>, #1: "Honda Accord 2018: blown head gasket" 🚗<small>three cars</small></div>
+</div>
+
+<p class="fragment" style="font-size: 0.9em">24 questions, no filter. MiniLM crossed domains on 3. Voyage on none.</p>
+
+Note: A fair test, fixed before either run: 24 questions, 8 per domain (devices, vehicles, aviation), no kind filter, top 3, same 720 records. A hit counts when it comes from the right domain and mentions the topic (keywords chosen up front). Right domain in the top 3: MiniLM 0.94, Voyage 1.00. On topic: 0.89 vs 0.93. MRR: 0.93 vs 0.97. MiniLM mixed up cars and planes on "car lost power", "engine stalled at an intersection" and "aircraft stalled after takeoff"; Voyage never left the domain. Be fair: devices are a tie, and on aviation MiniLM is a touch better on topic. Small sample, keyword judge: a direction, not a benchmark. On the public RTEB retrieval leaderboard voyage-4 averages about 78 nDCG@10 and all-MiniLM-L6-v2 about 39.
 
 --
 
@@ -1448,6 +1620,7 @@ Note: The log line from the sandbox.
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### Problem #11: The model makes things up
 
 <span class="small">This happened in an earlier demo that searched Netflix postmortems</span>
@@ -1477,6 +1650,7 @@ Note: The tool schema said dataset_id was a string, nothing more. The model had 
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### The fix
 
 <p style="font-size: 0.85em">The model never sees the code. It only sees each tool's schema: the arguments and what they accept.</p>
@@ -1497,7 +1671,7 @@ Note: The model never sees the Java. It sees a JSON schema for each tool, with t
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 7</span>It's Alive!</span>
 
-Note: 18:30. Section 7, about 3 minutes. It works, and what it cost. Three questions for the deployed agent, then the lessons.
+Note: 25:30. Section 7, about 3 and a half minutes. It works, and what it cost. Three questions for the deployed agent, then the lessons.
 
 --
 
@@ -1652,6 +1826,7 @@ Note: Real answer from the new build. The claim stays attributed to the report, 
 
 --
 
+<!-- .slide: data-skippable="true" -->
 ### The workspace is live
 
 <img src="img/captures/workspace-live.png" alt="The Atlas Agent Engine portal: the workspace is live" style="max-height: 520px">
@@ -1665,27 +1840,6 @@ Note: The Agent Engine portal. The Near Miss workspace is live.
 <img src="img/captures/atlas-vector-index-ready.png" alt="Atlas: the vector index is READY, 720 documents" style="max-height: 520px">
 
 Note: The Atlas portal. The vector index on the safety reports is READY, with 720 documents.
-
---
-
-### There and back again...
-
-<p style="font-size: 0.55em; margin: 0 0 0.4em"><em>"The Road goes ever on and on / Down from the door where it began."</em> <span class="small">— J.R.R. Tolkien, <em>The Fellowship of the Ring</em></span></p>
-
-<div style="display: flex; gap: 0.8em; align-items: center; width: 960px; position: relative; left: 50%; transform: translateX(-50%)">
-<svg viewBox="0 0 1000 610" role="img" aria-label="Near Miss on the Atlas Agent Engine: ingest on your machine, a package, the managed Agent Engine with a Python shim, Java runner, Orchestration Engine and Java tools, the Atlas cluster, OpenAI and the caller" style="flex: 2.6; min-width: 0; max-height: 560px">
-<defs><marker id="rah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker><marker id="gah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
-<g class="fragment" data-fragment-index="1"><rect x="20" y="370" width="500" height="230" rx="16" fill="var(--code-bg)" stroke="var(--muted)" stroke-width="2"/><text x="40" y="392" text-anchor="start" fill="var(--heading)" font-size="19" font-weight="700">Your machine</text><rect x="40" y="410" width="210" height="170" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="40" cy="410" r="14" fill="var(--accent)"/><text x="40" y="416" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">1</text><text x="145" y="446" text-anchor="middle" fill="var(--heading)" font-size="18" font-weight="700">Ingest</text><text x="145" y="494" text-anchor="middle" fill="var(--heading)" font-size="32" font-weight="400">🏥 🚗 ✈️</text><text x="145" y="526" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">FDA · NHTSA · NASA</text><text x="145" y="554" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">MiniLM embeds them</text><rect x="640" y="380" width="340" height="210" rx="16" fill="var(--code-bg)" stroke="var(--muted)" stroke-width="2"/><text x="660" y="408" text-anchor="start" fill="var(--heading)" font-size="20" font-weight="700">Atlas cluster · AWS</text><rect x="665" y="425" width="290" height="145" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><g data-center-x="810"><image href="img/mongodb-icon.svg" x="728" y="454" width="14.1" height="30"/><text x="820" y="477" text-anchor="middle" fill="var(--heading)" font-size="20" font-weight="700">Vector Search</text></g><text x="810" y="507" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">embeddings, metadata,</text><text x="810" y="529" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">provenance</text><path d="M520 490 L636 490" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="578" y="478" text-anchor="middle" fill="var(--accent)" font-size="15" font-weight="400">upsert</text><text x="578" y="512" text-anchor="middle" fill="var(--accent)" font-size="15" font-weight="400">records</text></g>
-<g class="fragment" data-fragment-index="2"><rect x="250" y="20" width="520" height="280" rx="16" fill="var(--code-bg)" stroke="var(--muted)" stroke-width="2"/><text x="270" y="42" text-anchor="start" fill="var(--heading)" font-size="19" font-weight="700">Atlas Agent Engine (managed)</text><rect x="270" y="410" width="230" height="170" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="270" cy="410" r="14" fill="var(--accent)"/><text x="270" y="416" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">2</text><text x="385" y="454" text-anchor="middle" fill="var(--heading)" font-size="18" font-weight="700">Package</text><text x="385" y="490" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="400">Maven jars</text><g data-center-x="385"><path transform="translate(304 498) scale(0.917)" fill="var(--heading)" d="M1.4446 11.5059c0 1.1021.1673 2.1585.4847 3.1563-.0378-.0028-.0691-.0058-.1058-.0058-.4209 0-.8015.16-1.0704.4512-.3454.3737-.4984.8335-.4316 1.293a1.576 1.576 0 0 0 .2148.5978c-.2319.1864-.4018.4456-.4844.7578-.0646.2448-.131.7543.2149 1.2794a1.4552 1.4552 0 0 0-.0625.1055c-.208.3923-.2207.8372-.0371 1.25.2783.6258.9696 1.1175 2.3126 1.6467.8356.3292 1.5988.5411 1.6056.543 1.1046.2847 2.104.4277 2.969.4277 1.4173 0 2.4754-.3849 3.1525-1.1446 1.538.2651 2.791.1403 3.592.006.6773.7555 1.7332 1.1387 3.1467 1.1387.8649 0 1.8643-.143 2.969-.4278.0068-.0019.77-.2138 1.6056-.543 1.343-.5292 2.0343-1.0208 2.3126-1.6466.1836-.4129.171-.8577-.037-1.25a1.4685 1.4685 0 0 0-.0626-.1056c.346-.525.2795-1.0346.2149-1.2793-.0826-.3122-.2525-.5714-.4844-.7579.11-.1816.1831-.3788.2148-.5977.0669-.4595-.0862-.9193-.4316-1.293-.2688-.2913-.6495-.4513-1.0704-.4513-.0209 0-.0376.0008-.0588.0018.3162-.9966.4846-2.0518.4846-3.1523 0-5.807-4.7362-10.5144-10.5789-10.5144-5.8426 0-10.5788 4.7073-10.5788 10.5144Zm10.5788-9.4831c5.2727 0 9.5476 4.246 9.5476 9.483a9.4201 9.4201 0 0 1-.2696 2.2365c-.0039-.0047-.0079-.011-.0117-.0156-.274-.3255-.6679-.5059-1.1075-.5059-.352 0-.714.1155-1.0763.3438-.2403.1517-.5058.422-.7793.7598-.2534-.3492-.608-.5832-1.0137-.6465a1.5174 1.5174 0 0 0-.2344-.0176c-.9263 0-1.4828.7993-1.6935 1.5177-.1046.2426-.6065 1.3482-1.3614 2.0978-1.1681 1.1601-1.4458 2.3534-.8396 3.6382-.843.1029-1.5836.0927-2.365-.006.5906-1.212.3626-2.4388-.8426-3.6322-.755-.7496-1.2568-1.8552-1.3614-2.0978-.2107-.7184-.7673-1.5177-1.6935-1.5177-.078 0-.1568.0054-.2344.0176-.4057.0633-.7604.2973-1.0137.6465-.2735-.3379-.539-.6081-.7794-.7598-.3622-.2283-.7243-.3438-1.0762-.3438-.4266 0-.8094.171-1.0821.4786a9.4208 9.4208 0 0 1-.2598-2.1936c0-5.237 4.2749-9.483 9.5475-9.483zM8.6443 7.0036c-.4838.0043-.9503.2667-1.1934.7227-.3536.6633-.1006 1.4873.5645 1.84.351.1862.4883-.5261.836-.6485.3107-.1095.841.399 1.0078.086.3536-.6634.1025-1.4874-.5625-1.84a1.3659 1.3659 0 0 0-.6524-.1602Zm6.8403 0c-.2199-.002-.4426.05-.6504.1602-.665.3526-.9181 1.1766-.5645 1.84.1669.313.6971-.1955 1.0079-.086.3476.1224.4867.8347.838.6485.6649-.3527.916-1.1767.5624-1.84-.243-.456-.7096-.7184-1.1934-.7227Zm-9.7565 1.418a.8768.8768 0 0 0-.877.877c0 .4846.3925.877.877.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zm12.6434 0c-.4845 0-.879.3925-.879.877 0 .4846.3945.877.879.877a.8768.8768 0 0 0 .877-.877.8768.8768 0 0 0-.877-.877zM8.7927 11.459c-.179-.003-.2793.1107-.2793.416 0 .8097.3874 2.125 1.4279 2.924.207-.7123 1.3453-1.2832 1.5079-1.2012.2315.1167.2191.4417.6074.7266.3884-.285.374-.6098.6056-.7266.1627-.082 1.3009.4889 1.5079 1.2012 1.0404-.799 1.4278-2.1144 1.4278-2.924 0-1.2212-1.583.6402-3.5413.6485-1.4686-.0061-2.7266-1.0558-3.2639-1.0645zM4.312 14.4768c.5792.365 1.6964 2.2751 2.1056 3.0177.1371.2488.371.3536.582.3536.4188 0 .7465-.4138.0391-.9395-1.0636-.791-.6914-2.0846-.1836-2.1642a.4302.4302 0 0 1 .0664-.004c.4616 0 .666.7892.666.7892s.5959 1.4898 1.6213 2.508c.942.9356 1.062 1.703.4961 2.6661-.0164-.004-.0159.0236-.1484.2149-.1853.2673-.4322.4688-.7188.6152-.5062.2269-1.1397.2696-1.7833.2696-1.037 0-2.1017-.1824-2.6975-.336-.0293-.0075-3.6505-.9567-3.1916-1.8224.0771-.1454.2033-.2031.3633-.2031.6463 0 1.823.9551 2.3283.9551.113 0 .196-.0865.2285-.2031.2249-.8045-3.2787-1.0522-2.9846-2.1642.0519-.1967.193-.2757.3907-.2754.854 0 2.7704 1.4923 3.172 1.4923.0307 0 .0525-.0085.0645-.0274.2012-.3227.1096-.5865-1.3087-1.4395-1.4182-.8533-2.4315-1.329-1.8653-1.9416.0651-.0707.1574-.1015.2695-.1015.8611.0002 2.8948 1.84 2.8948 1.84s.5487.5683.8809.5683c.0762 0 .1416-.0315.1855-.1054.2355-.3946-2.1858-2.2183-2.3224-2.971-.0926-.51.0641-.7676.3555-.7676-.0006.008.1701-.0285.4942.1759zm16.2257.5918c-.1366.7526-2.5579 2.5764-2.3224 2.9709.044.074.1092.1055.1855.1055.3321 0 .881-.5684.881-.5684s2.0336-1.8397 2.8947-1.84c.1121 0 .2044.0308.2695.1016.5662.6125-.447 1.0882-1.8653 1.9415-1.4183.853-1.51 1.1168-1.3087 1.4396.012.0188.0337.0273.0644.0273.4016 0 2.3181-1.4923 3.1721-1.4923.1977-.0002.3388.0787.3907.2754.294 1.112-3.2095 1.3597-2.9846 2.1642.0325.1166.1156.2032.2285.2032.5054 0 1.682-.9552 2.3283-.9552.16 0 .2862.0577.3633.2032.459.8656-3.1623 1.8149-3.1916 1.8224-.5958.1535-1.6605.336-2.6975.336-.6351 0-1.261-.0409-1.7638-.2599-.2949-.1472-.5488-.3516-.7383-.625-.0411-.0682-.1026-.1476-.1426-.205-.5726-.9679-.455-1.7371.4903-2.676 1.0254-1.0182 1.6212-2.508 1.6212-2.508s.2044-.7891.666-.7891a.4318.4318 0 0 1 .0665.0039c.5078.0796.88 1.3732-.1836 2.1642-.7074.5257-.3797.9395.039.9395.211 0 .445-.1047.5821-.3535.4092-.7426 1.5264-2.6527 2.1056-3.0178.5588-.3524.99-.1816.8497.5918z"/><text x="385" y="516" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="400">+ int8 MiniLM</text></g><text x="385" y="542" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="400">under 50 MiB</text><path d="M390 370 L390 304" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="402" y="346" text-anchor="start" fill="var(--accent)" font-size="15" font-weight="400">source archive</text></g>
-<g class="fragment" data-fragment-index="3"><rect x="270" y="60" width="210" height="220" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 5"/><circle cx="270" cy="60" r="14" fill="var(--accent)"/><text x="270" y="66" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">3</text><text x="375" y="88" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="700">Agent sandbox</text><rect x="285" y="110" width="80" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><image href="img/python.svg" x="313" y="118" width="24" height="24"/><text x="325" y="158" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">Python</text><text x="325" y="174" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">shim</text><rect x="385" y="110" width="80" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><image href="img/java.svg" x="416" y="118" width="17.8" height="24"/><text x="425" y="158" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">Java</text><text x="425" y="174" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">runner</text><path d="M366 145 L383 145" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)"/><text x="375" y="214" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">execs the JVM</text></g>
-<g class="fragment" data-fragment-index="4"><rect x="500" y="110" width="100" height="90" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="500" cy="110" r="14" fill="var(--accent)"/><text x="500" y="116" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">4</text><image href="img/mongodb-icon.svg" x="543" y="120" width="15.0" height="32"/><text x="550" y="176" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">Orchestration</text><text x="550" y="192" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">Engine</text><path d="M466 145 L498 145" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)" stroke-dasharray="5 4"/><text x="520" y="230" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">model and</text><text x="520" y="246" text-anchor="middle" fill="var(--heading)" font-size="13" font-weight="400">tool calls</text></g>
-<g class="fragment" data-fragment-index="5"><rect x="620" y="60" width="130" height="220" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 5"/><circle cx="620" cy="60" r="14" fill="var(--accent)"/><text x="620" y="66" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">5</text><text x="685" y="88" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="700">Tool sandbox</text><rect x="635" y="105" width="100" height="60" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><image href="img/java.svg" x="676" y="110" width="17.8" height="24"/><text x="685" y="152" text-anchor="middle" fill="var(--heading)" font-size="15" font-weight="400">Java tools</text><rect x="635" y="205" width="100" height="60" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><path transform="translate(673 208) scale(1.000)" fill="var(--heading)" d="M23.0325 11.2963c-.0503 0-.1006 0-.1508.0126l-4.021-7.4387c.0754-.1383.1131-.289.1131-.4524 0-.5403-.4398-.9675-.9675-.9675-.2765 0-.5278.113-.7037.3015L9.286 1.156C9.2357.6785 8.821.3016 8.3184.3016c-.5277 0-.9675.4398-.9675.9675 0 .1634.0377.3141.113.4524l-6.245 8.9591c-.0753-.0251-.1633-.0377-.2513-.0377-.5403 0-.9675.4398-.9675.9676 0 .5403.4398.9675.9675.9675h.0377l3.3676 8.3309c-.0503.1257-.088.2639-.088.402 0 .5404.4398.9676.9676.9676.2764 0 .5277-.113.7036-.3015l10.1152.9926c.1005.4273.49.7288.9424.7288.5403 0 .9676-.4398.9676-.9675 0-.2388-.088-.465-.2262-.6283l5.1141-8.8712c.0503.0126.1005.0126.1634.0126.5403 0 .9675-.4398.9675-.9676 0-.5403-.4272-.98-.9675-.98zM17.2272 4.021c.1131.1508.2765.264.4524.3267l-1.533 11.5728c-.1005.0252-.1885.0503-.2764.1005L7.4513 8.708c.0251-.0754.0377-.1634.0377-.2514 0-.0628-.0126-.1256-.0126-.1884zm4.8754 8.5068l-5.177 3.556a1.105 1.105 0 0 0-.1256-.0753L18.3455 4.335h.0126l3.9456 7.288c-.1508.1759-.2388.3895-.2388.6408 0 .1005.0126.1885.0377.2638zM6.3832 7.5016c-.4649.0754-.8293.4775-.8293.955v.0628l-3.4555 2.0481 5.378-7.7026zm.3519 1.91c.1256-.0252.2513-.088.3518-.1634l8.356 7.2628c-.0377.113-.0628.2262-.0628.3518v.0503l-9.311 3.845c-.1382-.201-.3518-.3518-.6031-.402zm8.8963 8.1172c.1257.1382.3016.2513.5026.289l.465 4.046c-.201.1006-.3519.264-.4524.4524l-9.8136-.955zm1.1435.2136c.3267-.1633.5403-.49.5403-.867 0-.088-.0126-.1634-.0377-.2513l4.7372-3.2545-4.8 8.331zm.2513-14.3497l-9.889 4.31-.1131-.0755 1.2565-5.3906h.0377c.3393 0 .6409-.1759.8168-.4397l7.891 1.5706zM1.935 11.6105c0-.0629-.0126-.1257-.0126-.1885l3.9079-2.2995c.0754.0754.1633.1508.2638.201L4.8252 20.243l-3.2043-7.9036c.1885-.176.3142-.4398.3142-.7288Z"/><text x="685" y="247" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">ONNX</text><text x="685" y="262" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">MiniLM int8</text><path d="M685 166 L685 203" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)"/><path d="M601 150 L633 135" fill="none" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#gah)"/><rect x="860" y="115" width="120" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><path transform="translate(907 120) scale(1.083)" fill="var(--heading)" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/><text x="920" y="162" text-anchor="middle" fill="var(--heading)" font-size="16" font-weight="700">OpenAI</text><text x="920" y="180" text-anchor="middle" fill="var(--heading)" font-size="14" font-weight="400">chat model</text><path d="M770 150 L856 150" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="813" y="134" text-anchor="middle" fill="var(--accent)" font-size="14" font-weight="400">chat</text><text x="813" y="176" text-anchor="middle" fill="var(--accent)" font-size="14" font-weight="400">completions</text><path d="M690 300 L690 378" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="702" y="346" text-anchor="start" fill="var(--accent)" font-size="15" font-weight="400">$vectorSearch</text></g>
-<g class="fragment" data-fragment-index="6"><rect x="40" y="60" width="150" height="70" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/><circle cx="40" cy="60" r="14" fill="var(--accent)"/><text x="40" y="66" text-anchor="middle" fill="#fff" font-weight="700" font-size="16">6</text><text x="115" y="103" text-anchor="middle" fill="var(--heading)" font-size="20" font-weight="700">🧑 Caller</text><path d="M190 95 L246 95" fill="none" stroke="var(--accent)" stroke-width="4" marker-end="url(#rah)"/><text x="218" y="84" text-anchor="middle" fill="var(--accent)" font-size="15" font-weight="400">invoke</text></g>
-</svg>
-<ul style="flex: 1; list-style: none; font-size: 0.48em; text-align: left; margin: 0; padding: 0"><li class="fragment" data-fragment-index="1" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">1</span><strong>Ingest</strong>: embed the public reports and upsert them into Atlas</li><li class="fragment" data-fragment-index="2" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">2</span><strong>Package</strong>: bundle the jars and an int8 model under 50 MiB</li><li class="fragment" data-fragment-index="3" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">3</span><strong>The stowaway</strong>: start the Java runner from a Python shim</li><li class="fragment" data-fragment-index="4" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">4</span><strong>The Orchestration Engine</strong>: approve every model and tool call</li><li class="fragment" data-fragment-index="5" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">5</span><strong>Java tools</strong>: embed the query, run the vector search and call the model</li><li class="fragment" data-fragment-index="6" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">6</span><strong>The caller</strong>: invoke the agent</li></ul>
-</div>
-
-Note: The whole journey, one piece at a time, with arrows between the big boxes in the theme colour. 1: the three public report sets are embedded in Java and upserted into the Atlas cluster. 2: the package, with the int8 model, goes up as a source archive under the 50 MiB limit. 3: the stowaway, a Python shim that starts the Java runner. 4: the Orchestration Engine approves every model and tool call. 5: the Java tools run the vector search and call the model. 6: a caller invokes it all.
 
 --
 
@@ -1717,7 +1871,17 @@ Note: One line each, with the problem it came from. These are the five things th
 <p class="fragment" style="margin: 0.3em 0 0; font-size: 0.85em; color: #6B6B6B">P.S. No hard feelings about <code style="font-size: 0.9em">java-none</code>.</p>
 </div>
 
-Note: Dear Platform Team. The shim works but is unsupported, and it could break with any platform update. This is the honest ending: here is what would make Java first-class. Init that accepts java, a Java runner base image with a Maven build step, the runner contract documented (mTLS and IPv6), or a way to bring your own image.
+Note: The letter types itself at reading speed, about a minute in all; press → to finish a paragraph and jump to the next. Dear Platform Team. The shim works but is unsupported, and it could break with any platform update. This is the honest ending: here is what would make Java first-class. Init that accepts java, a Java runner base image with a Maven build step, the runner contract documented (mTLS and IPv6), or a way to bring your own image.
+
+---
+
+<!-- .slide: class="finale" -->
+<div class="scratch">
+<h1>Java vs. MongoDB<svg class="fragment scribble" data-fragment-index="0" viewBox="0 0 1000 120" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="M10 70 C 160 40, 260 95, 420 58 S 700 30, 990 62 M30 88 C 240 70, 520 96, 980 44"/></svg></h1>
+<p class="fragment handwritten" data-fragment-index="1">Java + MongoDB</p>
+</div>
+
+Note: The title was a joke from the start: it was never a fight. Click to scratch it out, click again for the real title. A nod to João Mourão, who said the "vs." made it sound like a battle.
 
 ---
 
@@ -1732,4 +1896,4 @@ Note: Dear Platform Team. The shim works but is unsupported, and it could break 
 </div>
 </div>
 
-Note: 21:30. Questions. The QR code opens the feat/java-support branch on GitHub.
+Note: 29:30. Questions. The QR code opens the feat/java-support branch on GitHub.

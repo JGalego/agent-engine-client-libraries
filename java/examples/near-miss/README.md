@@ -142,6 +142,15 @@ Point the volume at this example's `data/` directory. `OPENAI_MODEL` selects the
 (default `gpt-4o-mini`). `NEAR_MISS_TEXT_PROVIDER=openai` uses `text-embedding-3-small`
 instead of MiniLM; the Atlas index dimension follows the model you ingest with.
 
+`NEAR_MISS_TEXT_PROVIDER=voyage` embeds with Voyage AI through Atlas instead: no ONNX Runtime and no
+model files are needed. It reads `VOYAGE_API_KEY`, the same project secret the memory server uses,
+so one key covers both (and they share its rate limit). `NEAR_MISS_VOYAGE_MODEL` defaults to
+`voyage-4` (1024 dimensions) and `NEAR_MISS_VOYAGE_BASE_URL` to `https://ai.mongodb.com/v1`, where
+model API keys created in Atlas work. A key scoped to one region needs its own host, such as
+`https://eu.ai.mongodb.com/v1`, and a key created on voyageai.com needs `https://api.voyageai.com/v1`. Records are embedded as documents and searches as
+queries. Vectors from different models are never compared, so switching provider means a fresh
+ingest into a new collection or index.
+
 ```bash
 curl -X POST http://localhost:3000/invoke -H 'Content-Type: application/json' \
   -d '{"message": "Find reports of insulin pumps delivering the wrong dose and say which dataset they come from.", "user_id": "ana"}'

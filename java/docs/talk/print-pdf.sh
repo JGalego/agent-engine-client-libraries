@@ -3,7 +3,8 @@
 #
 #   ./print-pdf.sh            # talk-steps.pdf: one page per click (every fragment step)
 #   ./print-pdf.sh final      # talk-final.pdf: one page per slide, every fragment shown
-#   ./print-pdf.sh both       # both files
+#   ./print-pdf.sh redux      # talk-redux.pdf: the short version, one page per slide, every fragment shown
+#   ./print-pdf.sh all        # all three files
 #
 # THEME=java ./print-pdf.sh   uses the Java theme. NOTES=1 adds the speaker notes on their own pages.
 set -euo pipefail
@@ -32,6 +33,8 @@ print() { # $1: output file, $2: extra query parameters
 case "$mode" in
   steps) print talk-steps.pdf "" ;;
   final) print talk-final.pdf "&pdfSeparateFragments=false" ;;
-  both)  print talk-steps.pdf ""; print talk-final.pdf "&pdfSeparateFragments=false" ;;
-  *) echo "Usage: $0 [steps|final|both]" >&2; exit 2 ;;
+  redux) print talk-redux.pdf "&pdfSeparateFragments=false&redux=1" ;;
+  all)   print talk-steps.pdf ""; print talk-final.pdf "&pdfSeparateFragments=false"
+         print talk-redux.pdf "&pdfSeparateFragments=false&redux=1" ;;
+  *) echo "Usage: $0 [steps|final|redux|all]" >&2; exit 2 ;;
 esac
