@@ -293,19 +293,20 @@
     }
     @keyframes caret { 50% { opacity: 0; } }
 
-    /* The finale: the title gets scribbled out and rewritten by hand. */
-    .reveal .scratch { position: relative; display: inline-block; }
-    .reveal .scratch h1 { position: relative; font-size: 2.6em; margin: 0; }
-    .reveal .scribble { position: absolute; left: -4%; top: 5%; width: 108%; height: 90%; overflow: visible; }
-    .reveal .scribble path { fill: none; stroke: #D92D20; stroke-width: 9; stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
-    .reveal .scribble.visible path { animation: scribble 0.7s ease-out forwards; }
-    @keyframes scribble { to { stroke-dashoffset: 0; } }
-    .reveal .handwritten {
-      margin: 0.2em 0 0; font: 700 3.2em/1 "Caveat", "Segoe Print", cursive; color: var(--accent);
-      transform: rotate(-4deg) scale(0.6); transition: transform 0.5s cubic-bezier(0.2, 1.7, 0.4, 1), opacity 0.3s;
-    }
-    .reveal .handwritten.visible { transform: rotate(-4deg) scale(1); }
-    @media (prefers-reduced-motion: reduce) { .reveal .scribble.visible path { animation: none; stroke-dashoffset: 0; } }
+    /* The finale: the title is rewritten as a git diff, removed line first, then the added one. */
+    .reveal .title-diff { display: inline-block; text-align: left; font: 600 1.45em/1.5 var(--r-code-font); color: var(--heading); }
+    .reveal .title-diff .hunk { font-weight: 400; font-size: 0.6em; color: var(--muted); }
+    .reveal .title-diff .line { padding: 0 0.3em; border-radius: 0.12em; white-space: pre; transition: background 0.3s, color 0.3s; }
+    .reveal .title-diff .sign { display: inline-block; width: 1.2em; }
+    .reveal .title-diff .w { border-radius: 0.1em; transition: background 0.3s; }
+    .reveal .slides section .title-diff .hunk { opacity: 0; transition: opacity 0.3s; }
+    .reveal .slides section .title-diff .hunk.visible { opacity: 1; }
+    .reveal .title-diff .old.visible { background: #FFEBE9; color: #82071E; }
+    .reveal .title-diff .old.visible .sign::before { content: "-"; }
+    .reveal .title-diff .old.visible .w { background: #FFB8B0; }
+    .reveal .slides section .title-diff .new { opacity: 0; transform: translateY(-0.4em); transition: opacity 0.35s, transform 0.35s; }
+    .reveal .slides section .title-diff .new.visible { opacity: 1; transform: none; background: #E3FCF7; color: #00513A; }
+    .reveal .title-diff .new.visible .w { background: #9EEBC4; }
 
     /* Title slide toy: a click drops a leaf or a mug that falls and bounces off the text. */
     #drops { position: fixed; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }

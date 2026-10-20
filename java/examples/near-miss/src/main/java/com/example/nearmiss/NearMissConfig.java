@@ -73,8 +73,8 @@ public final class NearMissConfig {
           env.getOrDefault("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
           // The same project secret the memory server uses, so one key covers both.
           blankToNull(env.get("VOYAGE_API_KEY")),
-          env.getOrDefault("NEAR_MISS_VOYAGE_BASE_URL", "https://ai.mongodb.com/v1"),
-          env.getOrDefault("NEAR_MISS_VOYAGE_MODEL", "voyage-4"),
+          env.getOrDefault("VOYAGE_BASE_URL", "https://ai.mongodb.com/v1"),
+          env.getOrDefault("VOYAGE_MODEL", "voyage-4"),
           parseInt(env.get("NEAR_MISS_RECORDS_PER_QUERY"), 25),
           parseDouble(env.get("NEAR_MISS_ANALOGY_CUTOFF"), 0.45));
     } catch (IOException e) {
