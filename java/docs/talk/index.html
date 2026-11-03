@@ -220,14 +220,16 @@
     @media print { #corner { display: none; } }
     html.redux .pdf-page:has(> section[data-skippable]) { display: none; }
     /* Side index: table of contents plus full-text search, toggled with I or the corner button. */
-    #toc-toggle, #redux-toggle {
+    #toc-toggle, #redux-toggle, #fireworks-toggle {
       border: 1px solid var(--muted); border-radius: 999px; padding: 6px 14px;
       background: var(--bg); color: var(--text); font: 600 14px "Inter", sans-serif;
       cursor: pointer; opacity: 0.35; transition: opacity 0.2s;
     }
     #toc-toggle:hover, #toc-toggle:focus-visible, #redux-toggle:hover, #redux-toggle:focus-visible,
-    #redux-toggle[aria-pressed="true"] { opacity: 1; }
-    #redux-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    #fireworks-toggle:hover, #fireworks-toggle:focus-visible,
+    #redux-toggle[aria-pressed="true"], #fireworks-toggle[aria-pressed="true"] { opacity: 1; }
+    #fireworks-toggle[hidden], #redux-toggle[hidden] { display: none; }
+    #redux-toggle[aria-pressed="true"], #fireworks-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
     #toc {
       position: fixed; top: 0; left: 0; bottom: 0; width: min(360px, 85vw); z-index: 60;
       display: flex; flex-direction: column; background: var(--bg); color: var(--text);
@@ -312,6 +314,11 @@
     #drops { position: fixed; inset: 0; pointer-events: none; z-index: 40; overflow: hidden; }
     #drops img { position: absolute; left: 0; top: 0; width: 56px; height: 56px; will-change: transform; }
     @media print { #drops { display: none; } }
+    /* Fireworks on the title slide: logos burst from wherever you click. */
+    #fireworks { position: fixed; inset: 0; pointer-events: none; z-index: 80; overflow: hidden; }
+    #fireworks img { position: absolute; left: 0; top: 0; will-change: transform, opacity; }
+    #fireworks .spark { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px 2px var(--accent); }
+    @media print { #fireworks { display: none; } }
   </style>
 </head>
 <body>
@@ -324,6 +331,7 @@
     </div>
   </div>
   <div id="drops" aria-hidden="true"></div>
+  <div id="fireworks" aria-hidden="true"></div>
   <nav id="toc" aria-label="Slide index">
     <input type="search" placeholder="Search slides…" aria-label="Search slides" autocomplete="off">
     <ol></ol>
@@ -331,6 +339,7 @@
   <div id="corner">
   <button id="theme-toggle" type="button" aria-label="Switch theme (T)" title="Switch theme (T)"></button>
   <button id="toc-toggle" type="button" aria-label="Index and search (I)" title="Index and search (I)">🔎 Index</button>
+  <button id="fireworks-toggle" type="button" aria-pressed="false" hidden aria-label="Fireworks: click anywhere for a burst of logos" title="Fireworks: click anywhere for a burst of logos">🎆 Fireworks</button>
   <button id="redux-toggle" type="button" aria-pressed="false" aria-label="Redux: skip the optional slides (R)" title="Redux: skip the optional slides (R)">⚡ Redux</button>
   </div>
 
@@ -444,6 +453,22 @@
     Reveal.on("ready", () => document.querySelectorAll("img[data-placeholder]").forEach((img) => {
       if (img.complete && img.naturalWidth === 0) placeholderFor(img);
     }));
+
+    // A slide marked data-requires="path" is dropped when that file is missing (an untracked GIF, say).
+    // Kept as a function so the redux toggle can re-check slides it parked.
+    async function dropUnavailable(sections) {
+      const gone = [];
+      await Promise.all(sections.filter((el) => el.dataset.requires).map(async (el) => {
+        let ok = false;
+        try { ok = (await fetch(el.dataset.requires, { method: "HEAD" })).ok; } catch (e) { /* offline */ }
+        if (!ok) gone.push(el);
+      }));
+      if (!gone.length) return;
+      gone.forEach((el) => (el.closest(".pdf-page") || el).remove());
+      if (!document.documentElement.classList.contains("print-pdf")) { Reveal.sync(); Reveal.layout(); }
+      document.dispatchEvent(new Event("deck-changed"));
+    }
+    Reveal.on("ready", () => dropUnavailable([...document.querySelectorAll(".slides section[data-requires]")]));
 
     Reveal.on("ready", linkifyCode);
     Reveal.on("ready", centerSvgGroups);
@@ -707,6 +732,7 @@
           });
         } else if (!on) {
           parked.forEach(([marker, el]) => marker.replaceWith(el));
+          dropUnavailable(parked.map(([, el]) => el));
           parked = [];
         }
         Reveal.sync();
@@ -725,6 +751,70 @@
       if (want === "1" || want === "true") set(true);
     });
     Reveal.addKeyBinding({ keyCode: 84, key: "T", description: "Switch theme" }, nextTheme);
+
+    // Fireworks: a button on the title slide arms the effect; while it is on, every click anywhere
+    // launches a rocket that bursts into MongoDB, Java and Python logos.
+    Reveal.on("ready", () => {
+      const btn = document.getElementById("fireworks-toggle");
+      const stage = document.getElementById("fireworks");
+      const LOGOS = ["img/mongodb-icon.svg", "img/java.svg", "img/python.svg"];
+      const calm = matchMedia("(prefers-reduced-motion: reduce)");
+      const armed = () => btn.getAttribute("aria-pressed") === "true";
+      const arm = (on) => btn.setAttribute("aria-pressed", String(on));
+
+      function burst(x, y) {
+        const count = calm.matches ? 6 : 26;
+        for (let i = 0; i < count; i++) {
+          const img = document.createElement("img");
+          img.src = LOGOS[Math.floor(Math.random() * LOGOS.length)];
+          img.alt = "";
+          const size = 24 + Math.random() * 20;
+          img.width = img.height = size;
+          const angle = (i / count) * 2 * Math.PI + (Math.random() - 0.5) * 0.4;
+          const speed = 110 + Math.random() * 190;
+          const dx = Math.cos(angle) * speed, dy = Math.sin(angle) * speed;
+          const at = (f, drop, scale, spin) =>
+            `translate(${x + dx * f - size / 2}px, ${y + dy * f + drop - size / 2}px) scale(${scale}) rotate(${spin}deg)`;
+          const spin = (Math.random() - 0.5) * 540;
+          stage.append(img);
+          img.animate([
+            { transform: at(0, 0, 0.2, 0), opacity: 1, offset: 0 },
+            { transform: at(0.8, 0, 1, spin * 0.5), opacity: 1, offset: 0.45, easing: "ease-in" },
+            { transform: at(1, 130, 0.7, spin), opacity: 0, offset: 1 },
+          ], { duration: 1500 + Math.random() * 700, easing: "cubic-bezier(0.1, 0.7, 0.3, 1)", fill: "forwards" })
+            .finished.then(() => img.remove(), () => img.remove());
+        }
+      }
+
+      function launch(x, y) {
+        if (calm.matches) { burst(x, y); return; }
+        const spark = document.createElement("div");
+        spark.className = "spark";
+        stage.append(spark);
+        spark.animate([
+          { transform: `translate(${x}px, ${innerHeight}px)`, opacity: 1 },
+          { transform: `translate(${x}px, ${y}px)`, opacity: 1 },
+        ], { duration: 380, easing: "cubic-bezier(0.2, 0.6, 0.4, 1)", fill: "forwards" })
+          .finished.then(() => { spark.remove(); burst(x, y); }, () => spark.remove());
+      }
+
+      btn.addEventListener("click", () => { arm(!armed()); btn.blur(); });
+      document.addEventListener("click", (e) => {
+        if (armed() && !e.target.closest("#corner, #toc")) launch(e.clientX, e.clientY);
+      });
+
+      // Both buttons live on the title slide only (R still toggles Redux anywhere); leaving it
+      // switches the fireworks off.
+      const redux = document.getElementById("redux-toggle");
+      function sync() {
+        const { h, v } = Reveal.getIndices();
+        const title = h === 0 && v === 0;
+        btn.hidden = redux.hidden = !title;
+        if (!title) arm(false);
+      }
+      Reveal.on("slidechanged", sync);
+      sync();
+    });
   </script>
 </body>
 </html>

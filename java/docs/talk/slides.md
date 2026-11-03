@@ -27,13 +27,24 @@ Note: 0:30. The whole whoami is about a minute and a half. Keep it quick. The Ph
 
 --
 
-## At <img src="img/whoami/csw.png" style="height: 0.75em; margin: 0 0 0 0.1em; vertical-align: -0.02em">, we build systems <br>that can't fail
+<img src="img/whoami/csw.png" style="height: 1.5em; margin: 0 0 0 0.1em; vertical-align: -0.02em">
+
+## We build systems that can't fail
 
 <p style="font-size: 0.6em; margin: 1.8em 0 0; white-space: nowrap">🚀 Space · ✈️ Aviation · 🚆 Railway · 🏥 Medical devices · 🚗 Automotive · 🛡️ Defence · ⚡ Energy</p>
 
 <p class="small">Since 1998 · NASA · ESA · Airbus · BMW · Alstom</p>
 
 Note: Critical Software, from the company's own site (criticalsoftware.com): the sectors, the year (since 1998) and the client names. This is also where the Near Miss demo comes from: reports where "it mostly works" is not enough.
+
+--
+
+<!-- .slide: data-skippable="true" data-requires="img/whoami/coimbra-office-3d.gif" -->
+## Made in Coimbra
+
+<img src="img/whoami/coimbra-office-3d.gif" alt="A 3D model of the Critical Software office in Coimbra" style="width: 75%; margin: 0">
+
+Note: The Coimbra office, in 3D.
 
 --
 
@@ -49,7 +60,7 @@ Note: Amazon's Principal Engineering Community tenets, nine of them on the publi
 
 --
 
-<!-- .slide: data-skippable="true" -->
+<!-- .slide: data-skippable="true" data-visibility="hidden" -->
 ## TL;DR
 
 Break things at scale
@@ -115,7 +126,7 @@ Note: The finger output is real: the server at plan.cat answers on port 79. Carr
 <div class="act fragment"><span class="act-icon">✨</span><strong>Happily ever after</strong><small>Java answers from Atlas</small></div>
 </div>
 
-<p class="dedication">Dedicated to João Mourão, who asked for a Disney movie</p>
+<p class="dedication">Dedicated to João Mourão (MongoDB), who asked for a Disney movie</p>
 
 Note: The structure of the talk, told the way João Mourão (MongoDB SA) suggested: context, the problem, the journey, the resolution. Click once per act. Credit him by name: the reorder was his idea. Not affiliated with Disney; the sparkles are CSS.
 
@@ -207,26 +218,9 @@ Note: The whole Atlas Vector Search setup, trimmed from AtlasVectorStore.java. O
 
 </div>
 
-<p class="fragment" style="font-size: 1.1em">Different words, same meaning.</p>
+<p class="fragment" style="font-size: 1.1em">Different words, similar meaning.</p>
 
 Note: Real output, in memory, no Atlas needed. The three ASRS reports come from three different report sets, and none of them says "lost power during climb" in those words.
-
---
-
-<!-- .slide: data-skippable="true" -->
-### Same index, other agencies
-
-```text
-> insulin pump delivered too much insulin
-
-0.659  INSULIN PUMP, Injury
-       IT WAS REPORTED THAT CARTRIDGE CHANGE ERRORS OCCURRED
-       WITH MULTIPLE CARTRIDGES DURING THE LOAD SEQUENCE…
-```
-
-<p class="fragment" style="font-size: 1.1em">One box for pumps and planes.</p>
-
-Note: Real result from the in-memory run: a MAUDE report for the pump. The pump and the aeroplane came out of the same index, with one embedding model.
 
 --
 
@@ -272,7 +266,7 @@ Note: The platform was announced on September 29, 2026. This is the public press
 
 <div style="position: relative">
 <svg viewBox="40 190 1140 460" role="img" aria-label="MongoDB agentic platform architecture: a partner ecosystem on the left, the agent runtime, state and memory, lifecycle and cost controls in the middle, and an agent and tool catalog on the right" style="width:100%;max-height:560px"><rect x="48" y="200" width="1126" height="440" rx="6" fill="none" stroke="var(--muted)" stroke-dasharray="3 5"/><text text-anchor="middle" fill="var(--text)" font-size="21"><tspan x="154" y="240">Partner Ecosystem</tspan></text><text text-anchor="middle" fill="var(--text)" font-size="21"><tspan x="590" y="228">Agents and Tools developed in</tspan><tspan x="590" y="256.8">LangGraph, CrewAI …</tspan></text><text text-anchor="middle" fill="var(--text)" font-size="21"><tspan x="1004" y="228">Agents and Tools</tspan><tspan x="1004" y="256.8">Catalog</tspan></text><rect x="64" y="298" width="179" height="58" rx="14" fill="var(--code-bg)" stroke="var(--muted)"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="153.5" y="335.05">Evaluation</tspan></text><rect x="64" y="379" width="179" height="58" rx="14" fill="var(--code-bg)" stroke="var(--muted)"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="153.5" y="416.05">Observability</tspan></text><rect x="64" y="460" width="179" height="58" rx="14" fill="var(--code-bg)" stroke="var(--muted)"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="153.5" y="483.25">Model</tspan><tspan x="153.5" y="510.85">Management</tspan></text><rect x="64" y="541" width="179" height="58" rx="14" fill="var(--code-bg)" stroke="var(--muted)"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="153.5" y="564.25">Audit, Compliance</tspan><tspan x="153.5" y="591.85">&amp; IAM</tspan></text><rect x="304" y="277" width="857" height="347" fill="var(--accent)" stroke="var(--divider-accent)" stroke-width="2"/><rect x="326" y="297" width="527" height="34" rx="8" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="589.5" y="322.05">Agent Framework Integrations</tspan></text><rect x="326" y="348" width="102" height="152" rx="22" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="377" y="404.45">Agent</tspan><tspan x="377" y="432.05">Lifecycle</tspan><tspan x="377" y="459.65">Mgmt</tspan></text><rect x="440" y="348" width="148" height="152" rx="22" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="514" y="418.25">Agent</tspan><tspan x="514" y="445.85">Runtime</tspan></text><rect x="600" y="348" width="141" height="152" rx="22" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="670.5" y="418.25">Agent State</tspan><tspan x="670.5" y="445.85">&amp; Memory</tspan></text><rect x="753" y="348" width="98" height="152" rx="22" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="802" y="418.25">Cost</tspan><tspan x="802" y="445.85">Controls</tspan></text><rect x="869" y="297" width="271" height="60" rx="10" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="1004.5" y="321.25">MongoDB Provided</tspan><tspan x="1004.5" y="348.85">Tools and Agents</tspan></text><rect x="869" y="368" width="271" height="60" rx="10" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="1004.5" y="406.05">Enterprise Catalog</tspan></text><rect x="869" y="439" width="271" height="60" rx="10" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="1004.5" y="477.05">Agent &amp; Tool Marketplace</tspan></text><rect x="326" y="515" width="814" height="34" rx="8" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="733" y="540.05">Security &amp; Governance</tspan></text><rect x="326" y="564" width="814" height="34" rx="8" fill="var(--accent-soft)" stroke="none"/><text text-anchor="middle" fill="var(--heading)" font-size="19"><tspan x="733" y="589.05">Run Anywhere</tspan></text></svg>
-<div class="sales-band fragment"><span class="sales-line">Shut up with the sales pitch.</span><span class="sales-line fragment">Boxes tell me nothing. I want to <em>try</em> it.</span></div>
+<div class="sales-band fragment"><span class="sales-line">Shut up with the sales pitch.</span><span class="sales-line fragment">Let me <em>try</em> it.</span></div>
 </div>
 
 <p class="small" style="margin-top: 0.4em">⚠️ Atlas Agent Engine is in <strong>public preview</strong>: not yet recommended for production.</p>
@@ -984,9 +978,12 @@ Note: The checkpointer I used lives in memory, so memory survives turns but not 
 <!-- .slide: data-skippable="true" -->
 ### Issue #492: a MongoDB saver
 
-<a href="https://github.com/langgraph4j/langgraph4j/issues/492" target="_blank" rel="noopener"><img src="img/captures/langgraph4j-issue.png" alt="GitHub issue 492 on langgraph4j: Add MongoDB checkpoint saver" style="max-height: 470px"></a>
+<div style="position: relative; display: inline-block; margin-right: 170px">
+<a href="https://github.com/langgraph4j/langgraph4j/issues/492" target="_blank" rel="noopener" style="display: grid"><img src="img/captures/langgraph4j-issue.png" alt="GitHub issue 492 on langgraph4j: Add MongoDB checkpoint saver" style="max-height: 470px; display: block; margin: 0"></a>
+<span class="fragment annot" style="left: 91%; top: 33%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">open!</span><span style="margin-left: 0.6em; padding: 0.25em 0.8em; border-radius: 999px; background: var(--code-bg); color: var(--heading); box-shadow: inset 0 0 0 2px var(--muted); font: 600 0.5em/1 Inter, sans-serif; white-space: nowrap; transform: rotate(4deg)">📅 Oct 15</span></span>
+</div>
 
-Note: Opened first, with a proposal and two questions for the maintainers: which driver version, and whether it belongs in the docs nav. Ask before you send a thousand lines.
+Note: Opened first, with a proposal and two questions for the maintainers: which driver version, and whether it belongs in the docs nav. Ask before you send a thousand lines. Click for the open arrow.
 
 --
 
@@ -994,8 +991,8 @@ Note: Opened first, with a proposal and two questions for the maintainers: which
 
 <div style="position: relative; display: inline-block; margin-right: 170px">
 <a href="https://github.com/langgraph4j/langgraph4j/pull/493" target="_blank" rel="noopener" style="display: grid"><img src="img/captures/langgraph4j-pr-open.png" alt="GitHub pull request 493 on langgraph4j: feat: add langgraph4j-mongodb-saver, open" style="grid-area: 1 / 1; max-height: 470px; display: block; margin: 0"><img class="fragment" data-fragment-index="2" src="img/captures/langgraph4j-pr.png" alt="The same pull request, now merged" style="grid-area: 1 / 1; max-height: 470px; display: block; margin: 0"></a>
-<span class="fragment annot" data-fragment-index="1" style="left: 91%; top: 70%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">on the<br>roadmap!</span></span>
-<span class="fragment annot" data-fragment-index="3" style="color: #D93025; left: 91%; top: 29%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">merged!<br>🎉</span></span>
+<span class="fragment annot" data-fragment-index="1" style="left: 91%; top: 70%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">on the<br>roadmap!</span><span style="margin-left: 0.6em; padding: 0.25em 0.8em; border-radius: 999px; background: var(--code-bg); color: var(--heading); box-shadow: inset 0 0 0 2px var(--muted); font: 600 0.5em/1 Inter, sans-serif; white-space: nowrap; transform: rotate(4deg)">📅 Oct 15</span></span>
+<span class="fragment annot" data-fragment-index="3" style="color: #D93025; left: 91%; top: 29%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">merged!<br>🎉</span><span style="margin-left: 0.6em; padding: 0.25em 0.8em; border-radius: 999px; background: var(--code-bg); color: var(--heading); box-shadow: inset 0 0 0 2px var(--muted); font: 600 0.5em/1 Inter, sans-serif; white-space: nowrap; transform: rotate(4deg)">📅 Oct 18</span></span>
 </div>
 
 Note: The PR closes the issue. Two collections, one for threads and one for checkpoints, unique indexes, no transactions so a standalone server is enough, and Testcontainers tests that include concurrent writers. Click once for the roadmap note, then once more: the screenshot flips from open to merged (October 18), the roadmap note stays. Click again for the red merged arrow. Until a release ships it, the Java runtime keeps its checkpoints in memory.
@@ -1866,16 +1863,16 @@ Note: One line each, with the problem it came from. These are the five things th
 <div class="letter" style="background: #FFFDF6; color: #2A2A2A; box-shadow: 0 6px 22px rgba(0,0,0,0.28); border-radius: 3px; padding: 1em 1.6em 0.9em; text-align: left; font-family: Georgia, 'Times New Roman', serif; font-size: 0.6em; line-height: 1.45; max-width: 860px; margin: 0 auto; text-wrap: pretty; transform: rotate(-0.5deg)">
 <p style="margin: 0; text-align: right; font-size: 0.85em; color: #6B6B6B">16 October 2026</p>
 <p style="margin: 0.4em 0 0.7em"><strong style="color: inherit">Dear MongoDB Atlas Agent Engine Team,</strong></p>
-<p class="fragment" style="margin: 0.5em 0">I'm writing from the other side of a 404. I spent the past few days trying to get a Java agent running on Atlas Agent Engine, and I'm happy (and a little surprised) to report that it works. Your Orchestration Engine took one look at it, said "come in", and my agent picked up the call.</p>
-<p class="fragment" style="margin: 0.5em 0">I should come clean about how. A small Python shim starts the JVM inside your Python runner, and the JRE ships as a PyPI wheel. Along the way I committed the ultimate sin: when the docs went quiet, I read your code. That's where I found the mutual TLS handshake, and a network probe showed me that the sandboxes only speak IPv6. It works, and I learned a lot, but one platform update could break it.</p>
-<p class="fragment" style="margin: 0.5em 0">So here's a small request: let <code style="font-size: 0.9em">agentengine init</code> say <code style="font-size: 0.9em">java</code>. A Java runner image and a Maven build step would be wonderful, and a written-down runner contract would already be a gift. Or simply let us bring our own image. Any one of these would turn my stowaway into a paying passenger.</p>
+<p class="fragment" style="margin: 0.5em 0">I'm writing to you from the other side of a 404, and I'm happy to report that a Java agent now runs on Atlas Agent Engine. Your Orchestration Engine took one look at it and said "come in".</p>
+<p class="fragment" style="margin: 0.5em 0">I should admit how I got there. I wrote a small Python shim that boots a JVM inside your runner, and when the docs went quiet I read your code. Sorry about that. It works, but one platform update could break the whole thing.</p>
+<p class="fragment" style="margin: 0.5em 0">So I have a small request: could <code style="font-size: 0.9em">agentengine init</code> learn to say <code style="font-size: 0.9em">java</code>? A Java runner image, a documented runner contract or simply bring-your-own-image would each do the job, and any of them would turn my stowaway into a paying passenger.</p>
 <p class="fragment" style="margin: 0.5em 0">Thank you for building something worth sneaking into.</p>
 <p class="fragment" style="margin: 0.8em 0 0">All the best,</p>
 <p class="fragment" style="margin: 0; font-family: 'Caveat', 'Segoe Print', cursive; font-size: 2.2em; line-height: 1.1; color: #1F3A5F">João Galego</p>
 <p class="fragment" style="margin: 0.3em 0 0; font-size: 0.85em; color: #6B6B6B">P.S. No hard feelings about <code style="font-size: 0.9em">java-none</code>.</p>
 </div>
 
-Note: The letter types itself at reading speed, about a minute in all; press → to finish a paragraph and jump to the next. Dear Platform Team. The shim works but is unsupported, and it could break with any platform update. This is the honest ending: here is what would make Java first-class. Init that accepts java, a Java runner base image with a Maven build step, the runner contract documented (mTLS and IPv6), or a way to bring your own image.
+Note: The letter types itself at reading speed, about half a minute in all; press → to finish a paragraph and jump to the next. Dear Platform Team. The shim works but is unsupported, and it could break with any platform update. This is the honest ending: here is what would make Java first-class. Init that accepts java, a Java runner base image with a Maven build step, the runner contract documented (mTLS and IPv6), or a way to bring your own image.
 
 ---
 
