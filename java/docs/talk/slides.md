@@ -7,7 +7,7 @@ Shipping Java agents to MongoDB Atlas Agent Engine
 <p class="small">MongoDB × Java meetup · November 2026</p>
 </div>
 
-Note: 0:00. Thirty minutes in the redux (R). One sentence: "This is the story of getting Java onto a platform that only speaks Python and TypeScript."
+Claude Commentary: 0:00. 30 minutes in redux (R). One sentence: getting Java onto a platform that only speaks Python and TypeScript.
 
 ---
 
@@ -23,7 +23,7 @@ Note: 0:00. Thirty minutes in the redux (R). One sentence: "This is the story of
 <div style="flex: 1"><h4 style="margin: 0 0 0.8em">Work</h4><p style="margin: 0.9em 0 0.2em">Lead ML Engineer</p><p style="margin: 0"><img src="img/whoami/siemens.png" style="height: 34px; margin: 0 0.3em; vertical-align: middle"></p><p style="margin: 0.9em 0 0.2em">Solutions Architect</p><p style="margin: 0"><img src="img/whoami/aws.png" style="height: 52px; margin: 0 0.3em; vertical-align: middle"></p><p style="margin: 0.9em 0 0.2em">Head of AI</p><p style="margin: 0"><img src="img/whoami/csw.png" style="height: 40px; margin: 0 0.3em; vertical-align: middle"></p></div>
 </div>
 
-Note: 0:30. The whole whoami is about a minute and a half. Keep it quick. The PhD is ABD; I once performed an autopsy (the forensics diploma), which gets a laugh.
+Claude Commentary: 0:30. Keep the whole whoami to a minute and a half. The PhD is ABD. The forensics diploma came with an autopsy I performed, which gets a laugh.
 
 --
 
@@ -35,7 +35,7 @@ Note: 0:30. The whole whoami is about a minute and a half. Keep it quick. The Ph
 
 <p class="small">Since 1998 · NASA · ESA · Airbus · BMW · Alstom</p>
 
-Note: Critical Software, from the company's own site (criticalsoftware.com): the sectors, the year (since 1998) and the client names. This is also where the Near Miss demo comes from: reports where "it mostly works" is not enough.
+Claude Commentary: Sectors, founding year and clients are from criticalsoftware.com. This is also where Near Miss comes from: reports where "it mostly works" is not good enough.
 
 --
 
@@ -44,7 +44,7 @@ Note: Critical Software, from the company's own site (criticalsoftware.com): the
 
 <img src="img/whoami/coimbra-office-3d.gif" alt="A 3D model of the Critical Software office in Coimbra" style="width: 75%; margin: 0">
 
-Note: The Coimbra office, in 3D.
+Claude Commentary: The Coimbra office, in 3D.
 
 --
 
@@ -56,7 +56,7 @@ Note: The Coimbra office, in 3D.
 <ol style="flex: 1; margin: 0; font-size: 0.62em; text-align: left; line-height: 1.55"><li>Exemplary practitioner</li><li>Technically fearless</li><li>Lead with empathy</li><li>Balanced and pragmatic</li><li>Illuminate and clarify</li><li>Flexible in approach</li><li>Respect what came before</li><li>Learn, educate, and advocate</li><li>Have resounding impact</li><li class="fragment tenet-bonus" style="color: var(--accent); font-weight: 700">Have fun doing it</li></ol>
 </div>
 
-Note: Amazon's Principal Engineering Community tenets, nine of them on the public page (amazon.jobs/en/landing_pages/pe-community-tenets). Click once more for number ten: it pops in. Number ten is mine, taken from the line in the old bio: dropped out to live life and have fun doing it.
+Claude Commentary: Nine tenets from Amazon's Principal Engineering Community (amazon.jobs/en/landing_pages/pe-community-tenets). One more click for number ten, which pops in. Ten is mine, from my old bio: dropped out to live life and have fun doing it.
 
 --
 
@@ -110,7 +110,7 @@ Elsewhere:
 </div>
 </div>
 
-Note: The finger output is real: the server at plan.cat answers on port 79. Carrier pigeons accepted per RFC 1149.
+Claude Commentary: The finger output is real: plan.cat answers on port 79. Carrier pigeons accepted per RFC 1149.
 
 ---
 
@@ -128,14 +128,14 @@ Note: The finger output is real: the server at plan.cat answers on port 79. Carr
 
 <p class="dedication">Dedicated to João Mourão (MongoDB), who asked for a Disney movie</p>
 
-Note: The structure of the talk, told the way João Mourão (MongoDB SA) suggested: context, the problem, the journey, the resolution. Click once per act. Credit him by name: the reorder was his idea. Not affiliated with Disney; the sparkles are CSS.
+Claude Commentary: The talk structure as João Mourão (MongoDB SA) suggested it: context, problem, journey, resolution. One click per act. Credit him by name, the reorder was his idea. Not affiliated with Disney; the sparkles are CSS.
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Prologue</span>Once upon a time</span>
 
-Note: 2:00. The prologue, about 4 minutes. What we're building and what it looks like when it works, before any of the pain.
+Claude Commentary: 2:00. Prologue, about 4 minutes. What we are building and how it looks when it works, before any of the pain.
 
 --
 
@@ -149,7 +149,7 @@ Note: 2:00. The prologue, about 4 minutes. What we're building and what it looks
 <span style="--i:0"><span class="pill bad">⚠️ Close call</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill">📝 Someone reports it</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill good">🔎 An agent finds it</span></span>
 </div>
 
-Note: An aviation term, and the name of the demo. Real public safety reports, searched by an agent. High stakes on purpose: it forces the agent to be careful about what it claims.
+Claude Commentary: An aviation term and the name of the demo. Real public safety reports, searched by an agent. High stakes on purpose: the agent has to be careful about what it claims.
 
 --
 
@@ -162,7 +162,7 @@ Note: An aviation term, and the name of the demo. Real public safety reports, se
 <g class="fragment"><path d="M652 210 L 748 210" stroke="var(--accent)" stroke-width="3" fill="none" marker-end="url(#wa)"/><text x="700" y="198" text-anchor="middle" font-weight="600" fill="var(--accent)" font-size="15">vectors</text><rect x="752" y="135" width="230" height="150" rx="14" fill="var(--accent)" stroke="var(--accent)" stroke-width="2"/><image href="img/mongodb-icon.svg" x="855" y="148" width="20" height="42"/><text x="867" y="225" text-anchor="middle" font-weight="700" fill="#fff" font-size="22">Atlas</text><text x="867" y="250" text-anchor="middle" font-weight="700" fill="#fff" font-size="18">Vector Search</text><text x="867" y="272" text-anchor="middle" font-weight="400" fill="#fff" font-size="14">one index to rule them all</text></g>
 </svg>
 
-Note: Device adverse events, vehicle complaints and aviation safety reports, from three agencies. One local embedding model, MiniLM, running through ONNX inside the JVM, and one Atlas vector index. Each record is stored with its provenance and licence. The agent has three tools: semantic search, metadata filter and evidence correlation.
+Claude Commentary: FDA MAUDE (devices), NHTSA (vehicles), NASA ASRS (aviation). One embedding model, MiniLM, running through ONNX inside the JVM, and one Atlas vector index. Every record keeps its provenance and licence. The agent has three tools: semantic search, metadata filter, evidence correlation.
 
 --
 
@@ -194,7 +194,7 @@ vectorSearch(fieldPath("embedding"), query, "near_miss", limit,
 
 <p class="fragment" style="font-size: 1.1em">Clicks don't survive a <code>git clone</code>.</p>
 
-Note: The whole Atlas Vector Search setup, trimmed from AtlasVectorStore.java. One vector field with cosine similarity, plus two filter fields so a search can be limited to one kind or one dataset. Ingest calls this if the index is missing, then waits for it to be READY. Click for the query side: the $vectorSearch stage from the Java driver's builders, with the filter on dataset_id. candidates is ten times the limit, at least 40. If the index isn't READY, the store falls back to an exact cosine scan and says so in the result, it never pretends.
+Claude Commentary: The whole Atlas Vector Search setup, trimmed from AtlasVectorStore.java: one cosine vector field plus filters on kind and dataset_id. Ingest creates the index if it is missing and waits for READY. Click for the query side: $vectorSearch from the driver's builders, filtered on dataset_id. candidates is 10x the limit, minimum 40. If the index is not READY the store falls back to an exact cosine scan and says so in the result.
 
 --
 
@@ -220,7 +220,7 @@ Note: The whole Atlas Vector Search setup, trimmed from AtlasVectorStore.java. O
 
 <p class="fragment" style="font-size: 1.1em">Different words, similar meaning.</p>
 
-Note: Real output, in memory, no Atlas needed. The three ASRS reports come from three different report sets, and none of them says "lost power during climb" in those words.
+Claude Commentary: Real output, in memory, no Atlas needed. The three hits come from three different ASRS report sets. None of them says "lost power during climb" in those words.
 
 --
 
@@ -242,14 +242,14 @@ Note: Real output, in memory, no Atlas needed. The three ASRS reports come from 
 <ul style="flex: 1; list-style: none; font-size: 0.48em; text-align: left; margin: 0; padding: 0"><li class="fragment" data-fragment-index="1" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">1</span><strong>Ingest</strong>: embed the public reports and upsert them into Atlas</li><li class="fragment" data-fragment-index="2" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">2</span><strong>Package</strong>: bundle the jars and an int8 model under 50 MiB</li><li class="fragment" data-fragment-index="3" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">3</span><strong>The stowaway</strong>: start the Java runner from a Python shim</li><li class="fragment" data-fragment-index="4" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">4</span><strong>The Orchestration Engine</strong>: approve every model and tool call</li><li class="fragment" data-fragment-index="5" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">5</span><strong>Java tools</strong>: embed the query, run the vector search and call the model</li><li class="fragment" data-fragment-index="6" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">6</span><strong>The caller</strong>: invoke the agent</li><li class="fragment" data-fragment-index="7" style="margin: 0.5em 0"><span style="display: inline-block; width: 1.5em; height: 1.5em; line-height: 1.5em; border-radius: 50%; background: var(--accent); color: #fff; text-align: center; font-weight: 700; margin-right: 0.4em">✨</span><strong>Or flip one switch</strong>: Voyage AI on Atlas does the embedding</li></ul>
 </div>
 
-Note: The happy ending first, Disney style: this is what runs at the end of the talk. Don't explain every box, each one gets its chapter. One piece at a time, with arrows between the big boxes in the theme colour. 1: the three public report sets are embedded in Java and upserted into the Atlas cluster. 2: the package, with the int8 model, goes up as a source archive under the 50 MiB limit. 3: the stowaway, a Python shim that starts the Java runner. 4: the Orchestration Engine approves every model and tool call. 5: the Java tools run the vector search and call the model. 6: a caller invokes it all. 7: the option MongoDB suggested, one environment variable away: Voyage AI on Atlas does the embedding, so it becomes an API call and the model leaves the package. The runs shown in this talk used MiniLM; say so.
+Claude Commentary: Happy ending first. Don't explain the boxes, each one gets a chapter. One piece per click. 1 Ingest: the public reports are embedded in Java and upserted into Atlas. 2 Package: with the int8 model, a source archive under the 50 MiB limit. 3 The stowaway: a Python shim that starts the Java runner. 4 The Orchestration Engine approves every model and tool call. 5 The Java tools run the vector search and call the model. 6 A caller invokes it all. 7 The switch MongoDB suggested: Voyage AI on Atlas does the embedding and the model leaves the package. The runs in this talk used MiniLM. Say so.
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 1</span>Dude, where's my Java SDK?</span>
 
-Note: 6:30. Section 1, about 2 minutes.
+Claude Commentary: 6:30. Chapter 1, about 2 minutes.
 
 --
 
@@ -258,7 +258,7 @@ Note: 6:30. Section 1, about 2 minutes.
 
 ![MongoDB press release: MongoDB Launches Atlas Agent Engine to Put AI Agents in Production Without a New Stack, September 29, 2026](img/captures/press-release-announcement.png) <!-- .element: style="max-height: 540px" -->
 
-Note: The platform was announced on September 29, 2026. This is the public press release.
+Claude Commentary: Announced on September 29, 2026. This is the public press release.
 
 --
 
@@ -271,7 +271,7 @@ Note: The platform was announced on September 29, 2026. This is the public press
 
 <p class="small" style="margin-top: 0.4em">⚠️ Atlas Agent Engine is in <strong>public preview</strong>: not yet recommended for production.</p>
 
-Note: Say the preview status out loud: it is public preview and MongoDB does not recommend it for production yet. The platform's architecture, redrawn from the overview diagram. Everything this talk touches sits in the middle: the agent runtime and its state and memory. Click: the audience's inner voice. Click again for the second line. Alternates if you want to ad-lib: "shut up and take my money", "I want to try this, not hear about it", "every deck has this slide".
+Claude Commentary: Say it out loud: public preview, and MongoDB does not recommend it for production yet. The platform diagram, redrawn from the overview. Everything in this talk sits in the middle: the agent runtime and its state and memory. Click for the heckle, again for the second line. Ad-libs: "shut up and take my money", "every deck has this slide".
 
 --
 
@@ -280,7 +280,7 @@ Note: Say the preview status out loud: it is public preview and MongoDB does not
 
 ![Atlas Agent Engine project overview: "Deploying enterprise agents has never been easier", with the CLI install and agentengine create steps](img/captures/agent-engine-overview.png) <!-- .element: style="max-height: 540px" -->
 
-Note: The product's front door. "Deploying enterprise agents has never been easier", and step 2 is `agentengine create`. Sounds great. So: where's the Java SDK?
+Claude Commentary: The product front door. "Deploying enterprise agents has never been easier", and step 2 is `agentengine create`. So where is the Java SDK?
 
 --
 
@@ -289,7 +289,7 @@ Note: The product's front door. "Deploying enterprise agents has never been easi
 
 <a href="https://www.mongodb.com/docs/agentengine/sdk/python/" target="_blank" rel="noopener"><img src="img/captures/sdk-python.png" alt="The MongoDB docs page for the Python SDKs: Atlas Agent Engine Python SDKs, with LangGraph, ADK and memory packages" style="max-height: 470px"></a>
 
-Note: Python gets a documentation page: packages, install commands, the lot. TypeScript has one too. Now, the Java one.
+Claude Commentary: Python gets a docs page with packages and install commands. TypeScript too. Now Java.
 
 --
 
@@ -297,7 +297,7 @@ Note: Python gets a documentation page: packages, install commands, the lot. Typ
 
 <a href="https://www.mongodb.com/docs/agentengine/sdk/java/" target="_blank" rel="noopener"><img src="img/captures/sdk-java-404.png" alt="The MongoDB docs page for the Java SDK: Sorry, we can't find that page" style="max-height: 470px"></a>
 
-Note: There isn't one. The docs have Python and TypeScript SDK pages, and this URL is a 404. Let it land, then go on to what the CLI says when you try anyway.
+Claude Commentary: There is none. The docs have Python and TypeScript SDK pages, and this URL is a 404. Pause, then move on to what the CLI says.
 
 --
 
@@ -320,7 +320,7 @@ Error: unsupported language/framework combination "java-none"
 
 This talk is about this error message. <!-- .element: class="fragment" -->
 
-Note: Let it sit for a second, then click for the arrow, and once more for the line below. "We'll get back here in chapter 6. First, how we got to the point of being rejected."
+Claude Commentary: Pause, click for the arrow, once more for the last line. Promise: "We come back to this in chapter 6. First, how we got rejected."
 
 --
 
@@ -335,7 +335,7 @@ Note: Let it sit for a second, then click for the arrow, and once more for the l
 </span><span class="fragment"> |
  └── java/         🫥</span></pre>
 
-Note: Click once per folder. A public mirror of a private monorepo. The runner (the part that serves agents) isn't documented anywhere public.
+Claude Commentary: One click per folder. A public mirror of a private monorepo. The runner, the part that serves agents, is not documented anywhere public.
 
 --
 
@@ -347,14 +347,14 @@ Note: Click once per folder. A public mirror of a private monorepo. The runner (
 
 <p class="big">How hard can it be?</p> <!-- .element: class="big fragment" -->
 
-Note: The plan, in layers: standalone pieces first, the undocumented runner later. The layers appear on their own, one every third of a second. The runner step is the one nobody has documented. Click once for the last line: "Famous last words."
+Claude Commentary: The plan in layers: standalone pieces first, the undocumented runner later. The layers appear on their own, one every third of a second. The runner is the step nobody has documented. Click for "Famous last words."
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 2</span>But it works on my machine</span>
 
-Note: 8:30. Section 2, about 3 minutes. The first contact with a real server.
+Claude Commentary: 8:30. Chapter 2, about 3 minutes. First contact with a real server.
 
 --
 
@@ -371,7 +371,7 @@ Note: 8:30. Section 2, about 3 minutes. The first contact with a real server.
 <li class="fragment">🟢 19 model tests, green on the first run</li>
 </ul>
 
-Note: Stage 1, the first brick in the plan. No server involved yet: can the TypeScript models become idiomatic Java without losing the wire format? One shared Jackson ObjectMapper (snake_case, no nulls), records for the models, and a generator for the 19 memory request types. All 19 model tests passed on the first run. Boring on purpose: it's the part that works, and the part everything else stands on.
+Claude Commentary: Stage 1, no server yet. Can the TypeScript models become idiomatic Java and keep the wire format? One shared Jackson ObjectMapper (snake_case, no nulls), records for the models, a generator for the 19 memory request types. All 19 model tests passed on the first run. Boring on purpose: everything else stands on it.
 
 --
 
@@ -405,7 +405,7 @@ public record DocumentBlock(
 
 </div>
 
-Note: One block from the SDK's models, side by side. The zod schema becomes a record: required fields are null-checked in the compact constructor, optional ones are just nullable, and mime_type becomes mimeType through one shared snake_case mapper. The type discriminator moves to the sealed interface (ContentBlock), so a document is never mistaken for an image that happens to share a url. Source: javascript/packages/agent-engine-sdk/src/models.ts and java/packages/agent-engine-sdk/.../DocumentBlock.java.
+Claude Commentary: One block from the SDK models. The zod schema becomes a record. Required fields are null-checked in the compact constructor, optional ones are nullable, mime_type becomes mimeType through the shared mapper. The type discriminator moves to a sealed interface, so a document is never mistaken for an image with the same url. Sources: javascript/packages/agent-engine-sdk/src/models.ts and java/packages/agent-engine-sdk/.../DocumentBlock.java.
 
 --
 
@@ -422,7 +422,7 @@ Note: One block from the SDK's models, side by side. The zod schema becomes a re
 <li class="fragment">🧪 <strong>The tests</strong>: a fake server (<code>HttpServer</code>)</li>
 </ul>
 
-Note: Stage 2: the memory SDK, the part that stores and searches what an agent remembers. The client side is plain JDK, no HTTP library. The tests run against a tiny fake server in the same JVM: no mocking library, no Docker, fast and green.
+Claude Commentary: Stage 2: the memory SDK, which stores and searches what an agent remembers. The client is plain JDK, no HTTP library. Tests run against a tiny fake server in the same JVM: no mocking library, no Docker.
 
 --
 
@@ -446,7 +446,7 @@ Note: Stage 2: the memory SDK, the part that stores and searches what an agent r
 </g>
 </svg>
 
-Note: Stage 2, the memory SDK. I tested it the careful way: an in-process fake HTTP server, no mocking library, and everything went green. Click for the real memory server from the local stack: every single write fails.
+Claude Commentary: I tested the careful way: an in-process fake HTTP server, everything green. Click for the real memory server from the local stack: every write fails.
 
 --
 
@@ -474,7 +474,7 @@ Upgrade: h2c                            ← can we talk HTTP/2 instead?
 
 <p class="small">References: <a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.net.http/java/net/http/HttpClient.Builder.html#version(java.net.http.HttpClient.Version)">JDK 17 <code>HttpClient.Builder.version()</code></a>, <a href="https://www.rfc-editor.org/rfc/rfc9110#section-7.8">RFC 9110 §7.8</a> (Upgrade), <a href="https://www.rfc-editor.org/rfc/rfc9110#section-15.2.2">§15.2.2</a> (101), <a href="https://www.rfc-editor.org/rfc/rfc7540#section-3.2">RFC 7540 §3.2</a> (h2c)</p>
 
-Note: The "c" is for cleartext. With TLS, HTTP/2 is negotiated during the handshake; without it, the client sends an ordinary HTTP/1.1 request with an Upgrade header, which means "can we talk HTTP/2 instead?". Both answers are legal. The server may say yes (101 Switching Protocols, RFC 9110 section 15.2.2) or ignore the header and answer normally over HTTP/1.1, for example 200 OK (section 7.8: a server MAY ignore Upgrade). RFC 7540 section 3.2 is where h2c is defined, and it says requests with a body must be sent in their entirety before HTTP/2 frames start, which is the detail that bites later. The "prefers HTTP/2" claim is the JDK 17 Javadoc for HttpClient.Builder.version(): "If this method is not invoked prior to building, then newly built clients will prefer HTTP/2. If set to HTTP/2, then each request will attempt to upgrade to HTTP/2 ... If the upgrade fails, then the response will be handled using HTTP/1.1". Aside: RFC 9113, the current HTTP/2 spec, deprecated the h2c upgrade as never widely deployed, but the JDK client still does it. The question is what happens to the request body that comes with it. Keep this one brief.
+Claude Commentary: The "c" is for cleartext. Over plain http the JDK client sends a normal HTTP/1.1 request with Upgrade: h2c, meaning "can we talk HTTP/2 instead?". The server may answer 101 or ignore the header and reply over HTTP/1.1 (RFC 9110 §15.2.2 and §7.8). RFC 7540 §3.2 defines h2c. The JDK 17 Javadoc for HttpClient.Builder.version() says clients prefer HTTP/2 by default. RFC 9113 deprecated the upgrade, but the JDK still sends it. The open question is what happens to the request body. Keep it brief.
 
 --
 
@@ -493,7 +493,7 @@ Note: The "c" is for cleartext. With TLS, HTTP/2 is negotiated during the handsh
 
 </div>
 
-Note: Click for the culprit.
+Claude Commentary: Click for the culprit.
 
 --
 
@@ -506,7 +506,7 @@ Note: Click for the culprit.
 <div class="bubble client l fragment fade-up">🧪 <strong>Fake test server</strong>: "Upgrade? Body? Sure, whatever."<small><code>200</code> it accepted the upgrade, so every test passed</small></div>
 </div>
 
-Note: The JDK HttpClient defaults to HTTP/2 and, over plain http, sends an h2c upgrade. Uvicorn drops the body of the upgraded request, so FastAPI sees an empty one and rejects the write. The fake server was happy to accept the upgrade, which is why every test passed.
+Claude Commentary: The JDK client defaults to HTTP/2 and sends an h2c upgrade over plain http. Uvicorn drops the body of the upgraded request, so FastAPI sees it empty and rejects the write. The fake server accepted the upgrade, so every test passed.
 
 --
 
@@ -537,7 +537,7 @@ void plainHttpRequestsDoNotAskForAnH2cUpgrade() {
 
 <p class="fragment" style="font-size: 1.1em">Fake servers only know what you taught them.</p>
 
-Note: One line of fix, plus a regression test, trimmed here: the fake server records the request and the test asserts there is no Upgrade header. The code is from Http.java and MemoryClientTest.java in the SDK package. This would have broken every local-development user. The fake tolerated what the real server doesn't, so make fakes strict, and make them fail loudly.
+Claude Commentary: One-line fix plus a regression test: the fake records the request and the test asserts there is no Upgrade header. From Http.java and MemoryClientTest.java. This would have broken every local-development user. Make fakes strict and make them fail loudly.
 
 --
 
@@ -553,7 +553,7 @@ Error: Embedding service rate limit exceeded
 
 </div>
 
-Note: The first memory search that needs an embedding fails with a rate limit. Semantic search embeds the query with a Voyage AI model, and that call is being throttled. Easy: what limit?
+Claude Commentary: The first memory search that needs an embedding fails with a rate limit. Semantic search embeds the query with a Voyage AI model, and that call is throttled. Which limit?
 
 --
 
@@ -567,7 +567,7 @@ Note: The first memory search that needs an embedding fails with a rate limit. S
 <div class="bubble err r fragment fade-up">🪵 <strong>The log</strong>: "You have not yet added your payment method…"<small>"…reduced rate limits of <code>3 RPM</code> and 10K TPM"</small></div>
 </div>
 
-Note: First guess was right: a key on the free tier gets 3 requests a minute. Then I read the docs, which describe the paid tier, and told the human, confidently, that the limit must come from a project-level override. Wrong. The memory server's own log quoted Voyage AI the whole time: no payment method on file, so the reduced limits apply.
+Claude Commentary: My first guess was right: a free-tier key gets 3 requests a minute. Then I read the docs, which describe the paid tier, and told the human, confidently, that it had to be a project-level override. Wrong. The memory server's own log quoted Voyage AI the whole time: no payment method, reduced limits.
 
 --
 
@@ -579,14 +579,14 @@ Note: First guess was right: a key on the free tier gets 3 requests a minute. Th
 
 <p class="fragment" style="font-size: 1.3em">Read the log before you theorize.</p>
 
-Note: Adding a payment method lifted the limit. The docs described the paid tier; the log described this account. And a wrong correction should be retracted out loud, which I did. Let this last line sit.
+Claude Commentary: A payment method lifted the limit. The docs described the paid tier, the log described this account. The wrong correction was retracted out loud. Pause on the last line.
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 3</span>Tap the Wire</span>
 
-Note: 11:30. Section 3, about 3 minutes. How do agents actually run?
+Claude Commentary: 11:30. Chapter 3, about 3 minutes. How do agents actually run?
 
 --
 
@@ -603,7 +603,7 @@ Note: 11:30. Section 3, about 3 minutes. How do agents actually run?
 <li class="fragment">🏃 Next up: the <strong>runner</strong></li>
 </ul>
 
-Note: Stage 3, in one breath: a LangChain4j chat model serves as the platform's BaseLLM, blocking and streaming, with translators for messages and tool schemas. 45 offline tests, then 6 live ones against the real OpenAI API: text, usage, streaming, tool calls, a tool result flowing back, early stream close. The models are the easy part. Now the one nobody documented.
+Claude Commentary: Stage 3 in one breath: a LangChain4j chat model serves as the platform's BaseLLM, blocking and streaming, with translators for messages and tool schemas. 45 offline tests, then 6 live against OpenAI: text, usage, streaming, tool calls, a tool result flowing back, early stream close. Models are the easy part. Next, the part nobody documented.
 
 --
 
@@ -629,7 +629,7 @@ LLMResponse response = llm.invoke(
 
 </div>
 
-Note: A LangChain4j chat model in, the platform's BaseLLM out. This is trimmed from the live test that ran against the real OpenAI API: the same adapter also takes a streaming model, and the call accepts kwargs like temperature and max_tokens. Swap OpenAiChatModel for any other LangChain4j provider and nothing else changes.
+Claude Commentary: A LangChain4j chat model in, the platform's BaseLLM out. Trimmed from the live test against the real OpenAI API. A streaming model works too, and calls accept kwargs like temperature and max_tokens. Swap OpenAiChatModel for any other LangChain4j provider and nothing else changes.
 
 --
 
@@ -644,7 +644,7 @@ Note: A LangChain4j chat model in, the platform's BaseLLM out. This is trimmed f
 
 <p class="big fragment">So: no Java on the managed platform. 😬</p>
 
-Note: The full sentence: "The Atlas Agent Engine imports the agent inside the same process as the agent sandbox." The platform loads an agent as module:attribute inside its own Python or Node runner image, and cloud builds run remotely from pyproject.toml or package.json. So a Java agent can't be built or deployed on the managed platform today. That's from the docs, not from a deployment attempt.
+Claude Commentary: The full sentence: "The Atlas Agent Engine imports the agent inside the same process as the agent sandbox." The platform loads an agent as module:attribute inside its own Python or Node runner image, and cloud builds run from pyproject.toml or package.json. So a Java agent cannot be built or deployed on the managed platform today. That comes from the docs, not from a deployment attempt.
 
 --
 
@@ -657,7 +657,7 @@ Note: The full sentence: "The Atlas Agent Engine imports the agent inside the sa
 <span style="--i:0"><span class="pill">📖 The docs</span></span><span style="--i:1"><span class="arrow">→</span><span class="pill">🐍 The Python runner</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill good">👀 Real traffic</span></span>
 </div>
 
-Note: Three steps. Read the docs: done, that was the quote. Read the Python runner, which is the part that isn't public. Then watch real traffic between the pieces.
+Claude Commentary: Three steps: read the docs (done, that was the quote), read the Python runner (the non-public part), watch real traffic between the pieces.
 
 --
 
@@ -701,7 +701,7 @@ Note: Three steps. Read the docs: done, that was the quote. Read the Python runn
 </g>
 </svg>
 
-Note: `agentengine dev up` generates a compose file: the Orchestration Engine is a public image, MongoDB runs next to it, and there is one app container. The OE calls http://app:8001 (the agent runtime) and http://app:8002 (the tool server). Click: swap the app container for a Java one, and everything else stays real. That gave a test bed with no hosted platform.
+Claude Commentary: `agentengine dev up` generates a compose file. The Orchestration Engine is a public image, MongoDB runs next to it, and there is one app container. The OE calls http://app:8001 (agent runtime) and http://app:8002 (tool server). Click: swap the app container for a Java one and everything else stays real. A test bed with no hosted platform.
 
 --
 
@@ -718,7 +718,7 @@ services:
     volumes: !reset []
 ```
 
-Note: A compose override: replace the app, drop the base file's build section and the source mounts. Everything else stays real.
+Claude Commentary: A compose override: replace the app, drop the base file's build section and the source mounts. Everything else stays real.
 
 --
 
@@ -739,7 +739,7 @@ runtime_lost
 
 <p class="fragment">The template has memory on. My request had no <code>user_id</code>. 🤦</p>
 
-Note: First step: scaffold the Python hello-world-agent template, run it, and read both containers' logs. The first invoke failed with runtime_lost. The app log said the durable memory identity was incomplete: the template has memory enabled and my request carried no user_id. A runner rule I'd otherwise have discovered much later. With a user_id it worked, and the traffic told the story.
+Claude Commentary: First step: scaffold the Python hello-world-agent template, run it, read both containers' logs. The first invoke failed with runtime_lost. The app log said the durable memory identity was incomplete: the template has memory on and my request had no user_id. A runner rule I would have found much later. With a user_id it worked, and the traffic told the story.
 
 --
 
@@ -793,7 +793,7 @@ Note: First step: scaffold the Python hello-world-agent template, run it, and re
 </g>
 </svg>
 
-Note: Mapped from the Python source and the OE's logs. The runtime never calls a model or tool on its own: it asks the OE first, and the OE applies policy and keeps the audit trail: 1. The OE starts a turn with POST /execute, 2. The runtime wants the LLM, so it asks /tool/execute. The OE approves and returns a stream URL, 3. The OE calls the model server (/invoke_llm/stream) and relays the chunks back to the runtime, 4. The model asked for a tool. Same dance: /tool/execute. For a local tool the OE answers "run it yourself", 5. The runtime runs the tool and reports the outcome on /tool/result, 6. LLM again, now with the tool result in context, 7. Done: /executor/callback with COMPLETED.
+Claude Commentary: Mapped from the Python source and the OE's logs. The runtime never calls a model or tool on its own. It asks the OE first, and the OE applies policy and keeps the audit trail. 1 The OE starts a turn with POST /execute. 2 The runtime wants the LLM and asks /tool/execute; the OE approves and returns a stream URL. 3 The OE calls the model server (/invoke_llm/stream) and relays the chunks. 4 The model asks for a tool: same dance on /tool/execute, and for a local tool the OE answers "run it yourself". 5 The runtime runs the tool and reports on /tool/result. 6 LLM again, with the tool result in context. 7 Done: /executor/callback with COMPLETED.
 
 --
 
@@ -817,14 +817,14 @@ Note: Mapped from the Python source and the OE's logs. The runtime never calls a
 
 <p class="fragment" style="font-size: 1.1em">The OE didn't care that I'm Java. 🎉</p>
 
-Note: Slice 1 of the runner: two JDK HttpServers, no web framework, a launcher that reads agent.yaml and loads the agent class, and at startup the runtime advertises its capabilities to the OE and refuses to serve if rejected. The big unknown was whether the OE rejects unfamiliar languages. It turned out to be nothing. Then a real invoke: a Java agent, answering through the real Orchestration Engine.
+Claude Commentary: Slice 1 of the runner: two JDK HttpServers, no web framework, a launcher that reads agent.yaml and loads the agent class. At startup the runtime advertises its capabilities to the OE and refuses to serve if rejected. The big unknown was whether the OE rejects unfamiliar languages. It does not care. Then a real invoke: a Java agent answering through the real Orchestration Engine.
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 4</span>Graphs, Threads and Amnesia</span>
 
-Note: 14:30. Section 4, about 4 minutes. LangGraph4j, memory and human-in-the-loop. Three problems, one per bullet on the next slide.
+Claude Commentary: 14:30. Chapter 4, about 4 minutes. LangGraph4j, memory and human-in-the-loop. Three problems, one per bullet on the next slide.
 
 --
 
@@ -842,7 +842,7 @@ Note: 14:30. Section 4, about 4 minutes. LangGraph4j, memory and human-in-the-lo
 <li class="fragment">⏸️ <strong>Pauses</strong>: a human decides when the graph resumes</li>
 </ol>
 
-Note: The graph draws itself when the slide opens. A LangGraph4j agent is a graph. The agent node calls the model, the tools node runs what the model asks for, and they loop until the model is done. The state travels along and is checkpointed after every node. Three features, three problems: threads, checkpoints and pauses.
+Claude Commentary: The graph draws itself when the slide opens. The agent node calls the model, the tools node runs what the model asks for, and they loop until the model is done. State travels along and is checkpointed after every node. Three features, three problems: threads, checkpoints, pauses.
 
 --
 
@@ -856,7 +856,7 @@ IllegalStateException: No execution is active on this thread
 
 </div>
 
-Note: First run of a graph agent through the SDK. Click for who is to blame.
+Claude Commentary: First run of a graph agent through the SDK. Click for who is to blame.
 
 --
 
@@ -870,7 +870,7 @@ Note: First run of a graph agent through the SDK. Click for who is to blame.
 <div class="bubble client l fragment fade-up">🧪 <strong>A unit test</strong>: "Caught it. Before the live agent did."<small>the graph test, not the demo</small></div>
 </div>
 
-Note: LangGraph4j runs nodes on its own worker threads, where my thread-bound execution scope was invisible. A test caught it before the live agent did.
+Claude Commentary: LangGraph4j runs nodes on its own worker threads, where my thread-bound execution scope was invisible. A unit test caught it before the live agent did.
 
 --
 
@@ -900,7 +900,7 @@ POOL.execute(() ->
 
 <p class="fragment" style="font-size: 1.1em">Context tied to a thread stays on that thread.</p>
 
-Note: LangGraph4j lets you supply the executor it uses for its nodes. ScopedExecutor is created on the thread that holds the execution, so it remembers it. Every task given to it is wrapped to run inside that same execution on whatever worker picks it up. Then the config just hands it to LangGraph4j. Trimmed from ScopedExecutor.java and LangGraph4jAgent.java.
+Claude Commentary: LangGraph4j lets you supply the executor for its nodes. ScopedExecutor is created on the thread that holds the execution, so it remembers it, and wraps every task to run inside that execution on whichever worker picks it up. The config hands it to LangGraph4j. Trimmed from ScopedExecutor.java and LangGraph4jAgent.java.
 
 --
 
@@ -915,7 +915,7 @@ Note: LangGraph4j lets you supply the executor it uses for its nodes. ScopedExec
 <div class="bubble err r fragment fade-up">🤷 "I don't know. We haven't met."</div>
 </div>
 
-Note: Three turns on the same thread through the real OE. The third answer is the problem.
+Claude Commentary: Three turns on the same thread through the real OE. The third answer is the problem.
 
 --
 
@@ -930,7 +930,7 @@ Note: Three turns on the same thread through the real OE. The third answer is th
 
 <p class="fragment" style="font-size: 1.1em">One agent turn is one run. A conversation is many.</p>
 
-Note: LangGraph4j releases a thread's checkpoints when a run ends. Every user message is a new run, so the history was gone before the next one started.
+Claude Commentary: LangGraph4j releases a thread's checkpoints when a run ends. Every user message is a new run, so the history was gone before the next one started.
 
 --
 
@@ -959,7 +959,7 @@ threadId(session, workspaceId)
 <div class="bubble server r fragment fade-up">⛵ "Your name is Ana, and you love sailing."</div>
 </div>
 
-Note: Two small things. The flag, in App.java, tells LangGraph4j to keep a thread's checkpoints when a run ends. And the platform's session id, scoped to the workspace so agents sharing a store can't collide, becomes the checkpointer's thread id, so every turn of a conversation lands on the same thread. One flag later, three turns through the real OE, memory intact.
+Claude Commentary: Two small things. The flag in App.java keeps a thread's checkpoints after a run ends. And the platform session id, scoped to the workspace so agents sharing a store cannot collide, becomes the checkpointer's thread id, so every turn lands on the same thread. Three turns through the real OE, memory intact.
 
 --
 
@@ -971,7 +971,7 @@ Note: Two small things. The flag, in App.java, tells LangGraph4j to keep a threa
 
 <p class="fragment" style="font-size: 1.1em">Restart the runtime and the agent forgets again.</p>
 
-Note: The checkpointer I used lives in memory, so memory survives turns but not restarts. LangGraph4j has savers for CockroachDB, DynamoDB, Hazelcast, MySQL, Oracle, Postgres, Redis and SQLite. There is no MongoDB saver, and I searched the issues and PRs for one. A platform built on MongoDB, with no MongoDB saver. So, an issue.
+Claude Commentary: The checkpointer I used lives in memory: it survives turns, not restarts. LangGraph4j has savers for CockroachDB, DynamoDB, Hazelcast, MySQL, Oracle, Postgres, Redis and SQLite. No MongoDB saver; I searched the issues and PRs. A platform built on MongoDB with no MongoDB saver. So: an issue.
 
 --
 
@@ -983,7 +983,7 @@ Note: The checkpointer I used lives in memory, so memory survives turns but not 
 <span class="fragment annot" style="left: 91%; top: 33%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">open!</span><span style="margin-left: 0.6em; padding: 0.25em 0.8em; border-radius: 999px; background: var(--code-bg); color: var(--heading); box-shadow: inset 0 0 0 2px var(--muted); font: 600 0.5em/1 Inter, sans-serif; white-space: nowrap; transform: rotate(4deg)">📅 Oct 15</span></span>
 </div>
 
-Note: Opened first, with a proposal and two questions for the maintainers: which driver version, and whether it belongs in the docs nav. Ask before you send a thousand lines. Click for the open arrow.
+Claude Commentary: Opened first, with a proposal and two questions for the maintainers: which driver version, and whether it belongs in the docs nav. Ask before you send a thousand lines. Click for the open arrow.
 
 --
 
@@ -995,7 +995,7 @@ Note: Opened first, with a proposal and two questions for the maintainers: which
 <span class="fragment annot" data-fragment-index="3" style="color: #D93025; left: 91%; top: 29%; display: flex; align-items: center; gap: 0.2em; transform: translateY(-50%) rotate(-4deg)"><svg viewBox="0 0 70 40" width="70" height="40" style="flex: none"><path d="M66 22 C 46 30, 26 28, 9 18" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M23 18.6 L9 18 L16.3 29.9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="annot-text" style="white-space: normal; line-height: 1.05">merged!<br>🎉</span><span style="margin-left: 0.6em; padding: 0.25em 0.8em; border-radius: 999px; background: var(--code-bg); color: var(--heading); box-shadow: inset 0 0 0 2px var(--muted); font: 600 0.5em/1 Inter, sans-serif; white-space: nowrap; transform: rotate(4deg)">📅 Oct 18</span></span>
 </div>
 
-Note: The PR closes the issue. Two collections, one for threads and one for checkpoints, unique indexes, no transactions so a standalone server is enough, and Testcontainers tests that include concurrent writers. Click once for the roadmap note, then once more: the screenshot flips from open to merged (October 18), the roadmap note stays. Click again for the red merged arrow. Until a release ships it, the Java runtime keeps its checkpoints in memory.
+Claude Commentary: The PR closes the issue. Two collections (threads, checkpoints), unique indexes, no transactions so a standalone server is enough, Testcontainers tests including concurrent writers. Click for the roadmap note, again to flip the screenshot from open to merged (October 18), again for the red merged arrow. Until a release ships it, the Java runtime keeps its checkpoints in memory.
 
 --
 
@@ -1011,7 +1011,7 @@ throw new SuspendException("awaiting_human_review", context);
 
 <p class="fragment" style="font-size: 1.1em">What does the agent receive when it comes back? 🤔</p>
 
-Note: Human in the loop. The agent throws a SuspendException, the OE parks the execution, a human approves, and the OE redispatches the agent with resume data.
+Claude Commentary: Human in the loop. The agent throws a SuspendException, the OE parks the execution, a human approves, and the OE redispatches the agent with resume data.
 
 --
 
@@ -1026,7 +1026,7 @@ Note: Human in the loop. The agent throws a SuspendException, the OE parks the e
 
 <p class="fragment" style="font-size: 1.1em">When the docs are silent, print what arrived.</p>
 
-Note: The docs didn't say it was nested; printing what arrived settled it.
+Claude Commentary: The docs did not say it was nested. Printing what arrived settled it.
 
 --
 
@@ -1055,14 +1055,14 @@ POST /resume/<execution-id>
 <div class="bubble err r fragment fade-up">👎 <code>reject</code> → "Not approved, nothing was done."</div>
 </div>
 
-Note: The agent gets back exactly what the reviewer sent, under the key of the resume request body, which is human_review on the local OE. So the decision is one level down. The managed platform's resume endpoint takes a flat decision and nests it for you, which is why the docs never mention it. Both paths were exercised against the real OE: the approval agent suspended on the first call, and completed after approve and after reject. The code is from the approval-agent example.
+Claude Commentary: The agent gets back exactly what the reviewer sent, under the key of the resume request body: human_review on the local OE. So the decision is one level down. The managed platform's resume endpoint takes a flat decision and nests it for you, which is why the docs never mention it. Both paths ran against the real OE: the approval agent suspended on the first call and completed after approve and after reject. Code from the approval-agent example.
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 5</span>Reports, Not Findings</span>
 
-Note: 18:30. Section 5, about 2 minutes. Back to the Near Miss data: what went wrong in retrieval, and what the agent may claim.
+Claude Commentary: 18:30. Chapter 5, about 2 minutes. Back to the Near Miss data: what went wrong in retrieval, and what the agent may claim.
 
 --
 
@@ -1078,7 +1078,7 @@ Note: 18:30. Section 5, about 2 minutes. Back to the Near Miss data: what went w
 
 </div>
 
-Note: The same non-answer ranked first for every pump query. Click for the culprit.
+Claude Commentary: The same non-answer ranked first for every pump query. Click for the culprit.
 
 --
 
@@ -1093,7 +1093,7 @@ Note: The same non-answer ranked first for every pump query. Click for the culpr
 
 <p class="fragment" style="font-size: 1.1em">Generic text is close to every question.</p>
 
-Note: MiniLM reads 256 wordpieces, so MAUDE narratives need chunking. The later chunks of a long narrative are manufacturer boilerplate, such as "insufficient information regarding a device problem", which ranked first for every pump query.
+Claude Commentary: MiniLM reads 256 wordpieces, so MAUDE narratives need chunking. The later chunks are manufacturer boilerplate like "insufficient information regarding a device problem", which ranked first for every pump query.
 
 --
 
@@ -1108,7 +1108,7 @@ TextChunks.split(narrative, 120, 30, 1)
 
 <p class="fragment" style="font-size: 1.1em">Keep the part where someone says what happened.</p>
 
-Note: Only the first chunk of each MAUDE narrative is kept, which is where the reporter describes the event. NHTSA complaints keep up to three chunks.
+Claude Commentary: Only the first chunk of each MAUDE narrative is kept, because that is where the reporter describes the event. NHTSA complaints keep up to three chunks.
 
 --
 
@@ -1124,7 +1124,7 @@ an outcome, or what a patient, driver or pilot should do.
 Point to the report instead.
 ```
 
-Note: Part of the agent's system prompt. A report says what somebody submitted. Nobody has confirmed it. With medical and aviation data the agent has to know that.
+Claude Commentary: Part of the agent's system prompt. A report says what somebody submitted. Nobody has confirmed it. With medical and aviation data the agent has to know that.
 
 --
 
@@ -1136,7 +1136,7 @@ Note: Part of the agent's system prompt. A report says what somebody submitted. 
 <div class="bubble err r fragment fade-up">🚫 <strong>Never</strong>: "The pump is defective."<small>nobody confirmed it</small></div>
 </div>
 
-Note: A claim inside a report is relayed only as what the report says. The first build did not do this, and it also did not clearly decline to give advice. One added prompt line fixed both: decline advice, name the manufacturer, a clinician or the agency, and relay claims only as what the report says. The real answer is in chapter 7.
+Claude Commentary: A claim inside a report is relayed only as what the report says. The first build did not do this and did not clearly decline to give advice either. One added prompt line fixed both: decline advice, point to the manufacturer, a clinician or the agency, relay claims only as what the report says. The real answer is in chapter 7.
 
 --
 
@@ -1149,7 +1149,7 @@ Note: A claim inside a report is relayed only as what the report says. The first
 
 <p class="fragment" style="font-size: 1.1em"><code>correlate_evidence</code> sets <code>verified_connection: true</code> only when two records share one of these.</p>
 
-Note: The correlate_evidence tool marks verified_connection only when two records share provenance stored at ingest. Even then it says what is verified, a grouping in the source data, and not that the two reports describe the same event. A shared publisher name is a catalog attribution.
+Claude Commentary: correlate_evidence sets verified_connection only when two records share provenance stored at ingest. Even then it says only that the source data groups them, not that the reports describe the same event. A shared publisher name is a catalog attribution.
 
 --
 
@@ -1165,7 +1165,7 @@ Note: The correlate_evidence tool marks verified_connection only when two record
 <p style="margin: 0.3em 0"><span class="flow" style="display: inline-flex; margin: 0"><span class="pill bad">independent</span></span> &nbsp;similarity below the reporting cutoff</p>
 </div>
 
-Note: The question is the one asked of the managed deployment in chapter 7. The correlate_evidence tool can only answer with a few relationships. The verified ones need provenance shared at ingest. Without it, the best a similar pair can get is analogous_pattern, a pattern in one embedding space, and below the reporting cutoff it is just independent.
+Claude Commentary: The same question is asked of the managed deployment in chapter 7. correlate_evidence can answer with only a few relationships. The verified ones need provenance shared at ingest. Without it the best a similar pair gets is analogous_pattern, a pattern in one embedding space. Below the reporting cutoff it is independent.
 
 --
 
@@ -1195,14 +1195,14 @@ Note: The question is the one asked of the managed deployment in chapter 7. The 
 <div class="bubble server r fragment fade-up">🤖 "There is no verified connection."</div>
 </div>
 
-Note: Real tool output, trimmed. Both reports mention a sudden loss of power and their vectors are close, but the datasets share no report, product, vehicle or report set. The agent may only call two records connected if they share provenance. Similar vectors from unrelated datasets are an analogy, and it says so.
+Claude Commentary: Real tool output, trimmed. Both reports mention a sudden loss of power and their vectors are close, but the datasets share no report, product, vehicle or report set. The agent may call two records connected only if they share provenance. Similar vectors from unrelated datasets are an analogy, and it says so.
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 6</span>The Stowaway Agent</span>
 
-Note: 20:30. Section 6, about 5 and a half minutes. Back to the error from the start, then the workaround, then what broke on the way to a deployed agent: five things in the full talk, two in the redux. Deployed means nothing until it answers.
+Claude Commentary: 20:30. Chapter 6, about 5 and a half minutes. Back to the error from the start, then the workaround, then what broke on the way to a deployed agent: five things in the full talk, two in redux.
 
 --
 
@@ -1223,7 +1223,7 @@ Error: unsupported language/framework combination "java-none"
 <div class="bubble err r fragment fade-up">🔎 <strong>The template</strong>: "I only mirror the CLI binary and the dev-stack images."<small>from <code>agent source template --stdout</code></small></div>
 </div>
 
-Note: Back to the error from the start. The CLI reads the language and framework and rejects java before anything reaches the server. The hidden AGENTENGINE_IMAGE_SOURCE=custom option, which agentengine agent source template shows, only mirrors the CLI binary and the dev-stack images. It does not deploy your own agent image.
+Claude Commentary: Back to the error. The CLI reads language and framework and rejects java before anything reaches the server. The hidden AGENTENGINE_IMAGE_SOURCE=custom option, shown by `agentengine agent source template`, only mirrors the CLI binary and the dev-stack images. It does not deploy your own agent image.
 
 --
 
@@ -1238,7 +1238,7 @@ Note: Back to the error from the start. The CLI reads the language and framework
 <div class="flow fragment" style="font-size: 0.9em; justify-content: flex-start"><span class="pill" style="min-width: 11em; text-align: center">☕ <code>pom.xml</code></span><span class="arrow">→</span><span class="pill bad">🤷 nothing</span></div>
 </div>
 
-Note: The CLI knows two runner base images and reads pyproject.toml or package.json. A Java agent has neither a Java base image nor a Java build step.
+Claude Commentary: The CLI knows two runner base images and reads pyproject.toml or package.json. A Java agent has neither a base image nor a build step.
 
 --
 
@@ -1255,7 +1255,7 @@ app.run()
 
 <p class="fragment">Nobody said <code>run()</code> has to return.</p>
 
-Note: The runner image imports whatever agent.yaml names, checks it's a BaseApp, and calls run().
+Claude Commentary: The runner image imports whatever agent.yaml names, checks it is a BaseApp and calls run().
 
 --
 
@@ -1279,7 +1279,7 @@ app = JavaApp("java-agent")
 <li class="fragment">📦 Prebuilt jars in the source tree</li>
 </ol>
 
-Note: os.execv replaces the Python process with the JVM. Same PID, same environment, same ports. The JRE comes from a PyPI wheel (jdk4py, a trimmed Temurin). Prebuilt jars ship in the source tree.
+Claude Commentary: os.execv replaces the Python process with the JVM: same PID, same environment, same ports. The JRE comes from a PyPI wheel (jdk4py, a trimmed Temurin). Prebuilt jars ship in the source tree.
 
 --
 
@@ -1297,7 +1297,7 @@ $ agentengine build logs bld_01M524H4BZG1YJJJQRGJ5NZ6JM
 <div class="bubble server r fragment fade-up">🏗️ <strong>The platform</strong>: "Ah yes, a Python agent." 🐍</div>
 </div>
 
-Note: The managed build happily installed our "Python" project. It never imports the entrypoint at build time, so the shim needs no build-time guard.
+Claude Commentary: The managed build installed our "Python" project without complaint. It never imports the entrypoint at build time, so the shim needs no build-time guard.
 
 --
 
@@ -1317,7 +1317,7 @@ $ agentengine logs --source agent
 
 </div>
 
-Note: The build and the deploy both succeeded. The invoke failed. The agent log told the story: the JVM starts, the tool sandbox comes up, and the agent sandbox dies when it advertises its capabilities to the Orchestration Engine. The runner refuses to serve without the advertisement, so it never becomes ready.
+Claude Commentary: Build and deploy both succeeded. The invoke failed. The agent log shows the JVM starting, the tool sandbox coming up, and the agent sandbox dying when it advertises its capabilities to the OE. The runner refuses to serve without the advertisement, so it never becomes ready.
 
 --
 
@@ -1330,7 +1330,7 @@ Note: The build and the deploy both succeeded. The invoke failed. The agent log 
 <div class="bubble client l fragment fade-up">🐍 <strong>The Python runner</strong>: "<code>TLS_CERT_PEM</code>, <code>TLS_KEY_PEM</code>, <code>TLS_CA_CERT_PEM</code>. If any of the three is missing I refuse to connect."<small>the contract was written down only in <code>tls_client.py</code></small></div>
 </div>
 
-Note: First theory: the platform uses a private CA that Python trusts and Java doesn't. I wrote a launcher that merged the bundles and redeployed. The log showed the system bundle was the public one and the handshake still failed. The real contract was in the Python runner's tls_client.py: the agent runtime talks to the OE over mutual TLS. The platform hands the runtime a client certificate, key and CA as environment variables.
+Claude Commentary: First theory: a private CA that Python trusts and Java does not. I wrote a launcher that merged the bundles and redeployed. The log showed the system bundle was the public one and the handshake still failed. The real contract was in the Python runner's tls_client.py: the runtime talks to the OE over mutual TLS, and the platform hands it a client certificate, key and CA as environment variables.
 
 --
 
@@ -1350,7 +1350,7 @@ context.init(keyManagers, trustManagers, null);
 
 <p class="fragment" style="font-size: 1.1em">Built from the three <code>TLS_*</code> variables. No certificate, no connection.</p>
 
-Note: The runner now builds its SSL context from TLS_CERT, TLS_KEY and TLS_CA_CERT, each from a path or inline PEM. It presents the client certificate and trusts only the platform CA, as the Python runner does. If any of the three is missing it refuses to connect, instead of falling back. The first version of this lived in the shim and changed the JVM's default context. It now lives in the runner's own client, so every other HTTPS call keeps the default. Tested against an HTTPS server that requires a client certificate.
+Claude Commentary: The runner builds its SSL context from the three TLS variables, each a path or inline PEM. It presents the client certificate and trusts only the platform CA, like the Python runner, and refuses to connect if any is missing. The first version lived in the shim and changed the JVM's default context. It now lives in the runner's own client, so every other HTTPS call keeps the default. Tested against an HTTPS server that requires a client certificate.
 
 --
 
@@ -1371,7 +1371,7 @@ case "RSA PRIVATE KEY" ->
 
 <p class="fragment" style="font-size: 1.1em">The older keys get wrapped in a PKCS#8 envelope by hand.</p>
 
-Note: The JDK parses only PKCS#8 private keys. The platform's key may come as PKCS#1 for RSA or SEC1 for EC. Wrapping one in a PKCS#8 envelope is a short fixed ASN.1 structure: a version number, the algorithm identifier, and the key bytes as an octet string. The code handles all three formats, and the tests use each. Living the dream.
+Claude Commentary: The JDK parses only PKCS#8 private keys. The platform's key may be PKCS#1 (RSA) or SEC1 (EC). Wrapping one in PKCS#8 is a short fixed ASN.1 structure: a version number, the algorithm identifier, the key bytes as an octet string. The code handles all three formats and the tests use each.
 
 --
 
@@ -1414,7 +1414,7 @@ object exceeds 52428800 byte limit
 </g>
 </svg>
 
-Note: The first build was refused after a 221 MB upload, because the platform caps the source archive at 50 MiB. The weight was the ONNX Runtime jar, which ships natives for every OS plus debug symbols, including a Windows .pdb that is 354 MB unpacked and 67 MB compressed, and the 86 MB float32 model. The jar is 130 MB compressed and over 600 MB unpacked. We only run on Linux.
+Claude Commentary: The first build was refused after a 221 MB upload: the platform caps the source archive at 50 MiB. The weight was the ONNX Runtime jar, which ships natives for every OS plus debug symbols (a Windows .pdb alone is 354 MB unpacked, 67 MB compressed), and the 86 MB float32 model. The jar is 130 MB compressed and over 600 MB unpacked. We only run on Linux.
 
 --
 
@@ -1423,7 +1423,7 @@ Note: The first build was refused after a 221 MB upload, because the platform ca
 
 ![Deployments: BUILD FAILED, then SUCCEEDED](img/captures/deployments-build-failed-then-succeeded.png) <!-- .element: style="max-height: 540px" -->
 
-Note: The portal lists the first attempt as BUILD FAILED, then the pruned one as succeeded.
+Claude Commentary: The portal shows the first attempt as BUILD FAILED, then the pruned one as succeeded.
 
 --
 
@@ -1433,7 +1433,7 @@ Note: The portal lists the first attempt as BUILD FAILED, then the pruned one as
 <span style="--i:0"><span class="pill">✂️ Prune other OSes' natives</span></span><span style="--i:1"><span class="arrow">+</span><span class="pill">🔢 An int8 model</span></span><span style="--i:2"><span class="arrow">→</span><span class="pill good">✅ 34 MiB</span></span>
 </div>
 
-Note: A generic --prune option in the packager drops the other platforms' natives, and the jar goes to 7 MB. An int8 MiniLM is 23 MB instead of 86, with a different model id so its vectors are never compared with the float32 ones.
+Claude Commentary: A generic --prune option in the packager drops the other platforms' natives, and the jar goes to 7 MB. An int8 MiniLM is 23 MB instead of 86, under a different model id so its vectors are never compared with the float32 ones.
 
 --
 
@@ -1454,7 +1454,7 @@ VOYAGE_API_KEY=…   # the one memory already uses
 
 <p class="fragment small">Same key as memory. Nothing new to set up.</p>
 
-Note: The suggestion from MongoDB, now a switch in the example: NEAR_MISS_TEXT_PROVIDER=voyage embeds with Voyage AI through Atlas (ai.mongodb.com, voyage-4 by default), records as documents and searches as queries. No ONNX Runtime, no model in the package. It reads VOYAGE_API_KEY, the project secret the memory server already needs, so there is nothing new to configure; the two share its rate limit. Vectors from different models are never compared, so switching means a fresh ingest into a new index (1024 dimensions instead of 384). Problem #2 still applies: a key with no payment method gets 3 requests a minute. Be honest: the transcripts in this talk ran MiniLM. The Voyage path has run for real against the EU endpoint: the live test passes and the full demo ran with it, next slides.
+Claude Commentary: MongoDB's suggestion, now a switch: NEAR_MISS_TEXT_PROVIDER=voyage embeds with Voyage AI through Atlas (ai.mongodb.com, voyage-4 by default). No ONNX Runtime, no model in the package. It reuses VOYAGE_API_KEY, the project secret memory already needs, and shares its rate limit. Different models never share an index: switching means a fresh ingest into a new index (1024 dimensions instead of 384). Problem #2 still applies without a payment method. The transcripts in this talk ran MiniLM; say so. The Voyage path has run for real against the EU endpoint, next slides.
 
 --
 
@@ -1467,7 +1467,7 @@ Note: The suggestion from MongoDB, now a switch in the example: NEAR_MISS_TEXT_P
 
 <p class="fragment small">Europe costs 1.1×. The key shows up once.</p>
 
-Note: Atlas, AI Model APIs, Model API Keys, Create. The geography sets where the requests run and which host the key works on: EU keys only work on eu.ai.mongodb.com. Region-scoped keys need a paid tier, so add a payment method first, which also lifts the 3-requests-a-minute trial limit from Problem #2. The CLI and the Admin API only create Any/Any keys today, so a European key is a UI job. Copy it on the spot: it is shown once.
+Claude Commentary: Atlas, AI Model APIs, Model API Keys, Create. The region sets where requests run and which host the key works on: EU keys work only on eu.ai.mongodb.com. Region-scoped keys need a paid tier, so add a payment method first; that also lifts the 3-a-minute trial limit from Problem #2. The CLI and Admin API only create Any/Any keys today, so a European key is a UI job. The key is shown once.
 
 --
 
@@ -1495,7 +1495,7 @@ mvn -pl examples/near-miss exec:java -Dexec.args=demo
 
 </div>
 
-Note: The commands as they ran on October 19. The curl returns a list with one 1024-number embedding (HTTP 200). The demo ingests 720 records, one Voyage call each, about 280 seconds, then runs the searches in memory; no Atlas cluster needed. The output says query_embedding voyage/voyage-4 at eu.ai.mongodb.com. Run from java/ with MAVEN_OPTS="-Xmx4g -XX:-UseSuperWord".
+Claude Commentary: The commands as run on October 19. The curl returns one 1024-number embedding (HTTP 200). The demo ingests 720 records, one Voyage call each, about 280 seconds, then searches in memory; no Atlas cluster needed. The output shows query_embedding voyage/voyage-4 at eu.ai.mongodb.com. Run from java/ with MAVEN_OPTS="-Xmx4g -XX:-UseSuperWord".
 
 --
 
@@ -1509,7 +1509,7 @@ Note: The commands as they ran on October 19. The curl returns a list with one 1
 
 <p class="fragment" style="font-size: 0.9em">24 questions, no filter. MiniLM crossed domains on 3. Voyage on none.</p>
 
-Note: A fair test, fixed before either run: 24 questions, 8 per domain (devices, vehicles, aviation), no kind filter, top 3, same 720 records. A hit counts when it comes from the right domain and mentions the topic (keywords chosen up front). Right domain in the top 3: MiniLM 0.94, Voyage 1.00. On topic: 0.89 vs 0.93. MRR: 0.93 vs 0.97. MiniLM mixed up cars and planes on "car lost power", "engine stalled at an intersection" and "aircraft stalled after takeoff"; Voyage never left the domain. Be fair: devices are a tie, and on aviation MiniLM is a touch better on topic. Small sample, keyword judge: a direction, not a benchmark. On the public RTEB retrieval leaderboard voyage-4 averages about 78 nDCG@10 and all-MiniLM-L6-v2 about 39.
+Claude Commentary: Fixed before either run: 24 questions, 8 per domain (devices, vehicles, aviation), no kind filter, top 3, same 720 records. A hit is the right domain plus the topic keywords, chosen up front. Right domain in the top 3: MiniLM 0.94, Voyage 1.00. On topic: 0.89 vs 0.93. MRR: 0.93 vs 0.97. MiniLM mixed up cars and planes on "car lost power", "engine stalled at an intersection" and "aircraft stalled after takeoff". Voyage never left the domain. Caveats: devices tie, MiniLM is slightly better on aviation topic, small sample, keyword judge. On the public RTEB retrieval leaderboard voyage-4 averages about 78 nDCG@10 and all-MiniLM-L6-v2 about 39.
 
 --
 
@@ -1524,7 +1524,7 @@ LLM stream failed: ConnectException: Network is unreachable
 
 </div>
 
-Note: The agent was up, the call to api.openai.com failed, and the egress policy listed api.openai.com:443 for both sandboxes. So it was not the allow-list.
+Claude Commentary: The agent was up and the call to api.openai.com failed. The egress policy lists api.openai.com:443 for both sandboxes, so it was not the allow-list.
 
 --
 
@@ -1539,7 +1539,7 @@ Note: The agent was up, the call to api.openai.com failed, and the egress policy
 
 <p class="fragment" style="font-size: 1.1em">The sandboxes are IPv6-only. My suggestion was backwards.</p>
 
-Note: The suggested flag was exactly backwards. A small probe, switched on with an environment variable, logged what the sandbox could reach: no proxy variables, the AAAA addresses connect, the A addresses fail with errno 101.
+Claude Commentary: The suggested flag was exactly backwards. A small probe, switched on by an environment variable, logged what the sandbox could reach: no proxy variables, the AAAA addresses connect, the A addresses fail with errno 101.
 
 --
 
@@ -1550,7 +1550,7 @@ Note: The suggested flag was exactly backwards. A small probe, switched on with 
 
 `-Djava.net.preferIPv6Addresses=true` ✅
 
-Note: Passed through JAVA_OPTS, which the shim reads. The call got past the network.
+Claude Commentary: Passed through JAVA_OPTS, which the shim reads. The call got past the network.
 
 --
 
@@ -1559,7 +1559,7 @@ Note: Passed through JAVA_OPTS, which the shim reads. The call got past the netw
 
 ![The platform's log: Network is unreachable](img/captures/log-network-unreachable.png) <!-- .element: style="max-height: 540px" -->
 
-Note: The log line from the sandbox.
+Claude Commentary: The log line from the sandbox.
 
 --
 
@@ -1574,7 +1574,7 @@ Failed looking up TXT record for host …mongodb.net
 
 </div>
 
-Note: The call now reached the MongoDB driver, and failed resolving the cluster address.
+Claude Commentary: The call now reached the MongoDB driver and failed resolving the cluster address.
 
 --
 
@@ -1586,7 +1586,7 @@ Note: The call now reached the MongoDB driver, and failed resolving the cluster 
 <div class="bubble err r fragment fade-up">☕ <strong>The JRE from pip</strong>: "I have N>>1 modules, but <code>jdk.naming.dns</code> isn't one of them."<small>a trimmed runtime</small></div>
 </div>
 
-Note: The MongoDB driver resolves SRV records through JNDI DNS. The pip-installed JRE is a jlinked runtime with 36 modules and no jdk.naming.dns.
+Claude Commentary: The MongoDB driver resolves SRV records through JNDI DNS. The pip-installed JRE is a jlinked runtime with 36 modules and no jdk.naming.dns.
 
 --
 
@@ -1608,7 +1608,7 @@ Note: The MongoDB driver resolves SRV records through JNDI DNS. The pip-installe
 
 <p class="fragment" style="font-size: 0.9em">The standard string names the hosts itself,<br> so the driver has nothing to look up.</p>
 
-Note: A mongodb+srv address is short on purpose: the driver asks DNS for SRV records that list the hosts, and for a TXT record with the options. Without jdk.naming.dns it can't. The standard connection string, which Atlas also gives you for the cluster, has the three hosts and the options written out, so there is nothing to look up. We set it as the MONGODB_URI project secret. The proper fixes are a JRE that includes the module, roughly 15 to 20 MB more in the source archive, or a pure-Java DNS resolver plugged into the driver. Neither is done.
+Claude Commentary: A mongodb+srv address is short on purpose: the driver asks DNS for SRV records listing the hosts and a TXT record with the options. Without jdk.naming.dns it cannot. The standard connection string, which Atlas also gives you, spells out the three hosts and the options, so there is nothing to look up. Set as the MONGODB_URI project secret. Proper fixes: a JRE that includes the module (roughly 15 to 20 MB more in the source archive) or a pure-Java DNS resolver plugged into the driver. Neither is done.
 
 --
 
@@ -1617,7 +1617,7 @@ Note: A mongodb+srv address is short on purpose: the driver asks DNS for SRV rec
 
 ![The platform's log: Failed looking up TXT record](img/captures/log-txt-record.png) <!-- .element: style="max-height: 540px" -->
 
-Note: The log line from the sandbox.
+Claude Commentary: The log line from the sandbox.
 
 --
 
@@ -1633,7 +1633,7 @@ Note: The log line from the sandbox.
 <div class="bubble err r fragment fade-up">🤖 "I found no records."<small>but the records were there</small></div>
 </div>
 
-Note: Two open-ended questions got no records while the data was there. Filtering by metadata worked, and so did the filtered search when told the exact arguments. Click for what the model put in the filter.
+Claude Commentary: Two open-ended questions got no records while the data was there. Filtering by metadata worked, and so did the filtered search when given the exact arguments. Click for what the model put in the filter.
 
 --
 
@@ -1647,7 +1647,7 @@ the model sent:     dataset_id = "Netflix public postmortems"
 
 <p class="fragment" style="font-size: 0.9em">It wrote the dataset's display name, but the filter wants the id, so nothing matched.</p>
 
-Note: The tool schema said dataset_id was a string, nothing more. The model had seen the display name in the tool descriptions and the question, so it wrote that. An exact-match filter on a value that doesn't exist returns zero hits, and the model took zero hits as the answer.
+Claude Commentary: The tool schema said dataset_id was a string and nothing more. The model had seen the display name in the tool descriptions and the question, so it wrote that. An exact-match filter on a value that does not exist returns zero hits, and the model took zero hits as the answer.
 
 --
 
@@ -1665,14 +1665,14 @@ Note: The tool schema said dataset_id was a string, nothing more. The model had 
 
 <p class="fragment" style="font-size: 0.9em">The schema now lists the valid dataset ids, <br>while a test checks the list.</p>
 
-Note: The model never sees the Java. It sees a JSON schema for each tool, with the arguments and the values they accept. A bare string accepts anything, so the model filled the dataset filter with the display name it had read in the question. The fix lists the allowed ids as an enum, on both semantic_search and filter_metadata, so the model picks one of them. The diff is the real change from the repository, and a test now asserts the enum values.
+Claude Commentary: The model never sees the Java, only a JSON schema per tool: the arguments and the values they accept. A bare string accepts anything. The fix lists the allowed ids as an enum on both semantic_search and filter_metadata. The diff is the real change from the repo, and a test asserts the enum values.
 
 ---
 
 <!-- .slide: data-background-color="var(--divider)" -->
 ## <span class="divider-title"><span class="chapter">Chapter 7</span>It's Alive!</span>
 
-Note: 25:30. Section 7, about 3 and a half minutes. It works, and what it cost. Three questions for the deployed agent, then the lessons.
+Claude Commentary: 25:30. Chapter 7, about 3 and a half minutes. It works, and what it cost. Three questions for the deployed agent, then the lessons.
 
 --
 
@@ -1697,7 +1697,7 @@ You said: Hello from the managed platform
 
 <p class="fragment" style="font-size: 0.9em">Only the CLI's language check stood in the way.</p>
 
-Note: The first full success on the managed platform, with the hello agent: all four agent replicas advertised language=java and the managed OE accepted it. The user id in the reply is the caller's platform user id. Nothing on the server side rejects Java; the only thing in the way was the CLI.
+Claude Commentary: First full success on the managed platform, with the hello agent: all four agent replicas advertised language=java and the managed OE accepted it. The user id in the reply is the caller's platform user id. Nothing server-side rejects Java; only the CLI stood in the way.
 
 --
 
@@ -1719,7 +1719,7 @@ Note: The first full success on the managed platform, with the hello agent: all 
 
 </div>
 
-Note: A Java agent on the managed platform, searching Atlas Vector Search. Real transcript from agentengine invoke, trimmed. Every hit carries its dataset id, source URL and licence. Search mode was atlas_vector_search. The ACN links open the NASA ASRS report set PDF at the page where the report starts. The last two are different reports from the same set.
+Claude Commentary: A Java agent on the managed platform searching Atlas Vector Search. Real transcript from agentengine invoke, trimmed. Every hit carries its dataset id, source URL and licence. Search mode was atlas_vector_search. The ACN links open the NASA ASRS report-set PDF at the page where the report starts. The last two hits are different reports from the same set.
 
 --
 
@@ -1739,7 +1739,7 @@ Note: A Java agent on the managed platform, searching Atlas Vector Search. Real 
 <div class="bubble server r fragment fade-up" style="font-size: 0.55em; align-self: flex-start">📋 <strong>Contributing factors</strong>: aircraft</div>
 </div>
 
-Note: ACN 2036402. A Maule M-4 lost power on the takeoff climb at 300 to 500 ft, made an off-airport landing, and the plane flipped over with no injuries. Afterwards the pilot inspected the plane and found a fuel pump that an airworthiness directive said to remove (AD 2003-05-01) was still fitted. This is the one report of the three that names a cause, and it is the reporter's own conclusion. The picture is the aircraft type, from Wikimedia Commons, not from the report. The record image links to the PDF at that page.
+Claude Commentary: ACN 2036402. A Maule M-4 lost power on the takeoff climb at 300 to 500 ft, made an off-airport landing and flipped over, no injuries. The pilot then found a fuel pump still fitted that an airworthiness directive (AD 2003-05-01) said to remove. Of the three reports, this is the one that names a cause, and it is the reporter's own conclusion. The picture is the aircraft type, from Wikimedia Commons, not from the report. The record image links to the PDF at that page.
 
 --
 
@@ -1760,7 +1760,7 @@ Note: ACN 2036402. A Maule M-4 lost power on the takeoff climb at 300 to 500 ft,
 <div class="bubble err r fragment fade-up" style="font-size: 0.55em; align-self: flex-start">📋 <strong>Contributing factors</strong>: aircraft and procedure</div>
 </div>
 
-Note: ACN 2081933. At about 22,000 ft the crew heard a loud thud with a sudden yaw, determined that the number 2 engine had seized, and the cabin crew described a large fireball. They returned and landed. The report gives no cause for the seizure. The picture is the CFM56-7B, the 737-700 engine, from Wikimedia Commons, not from the report.
+Claude Commentary: ACN 2081933. At about 22,000 ft the crew heard a loud thud with a sudden yaw and determined the number 2 engine had seized. The cabin crew described a large fireball. They returned and landed. The report gives no cause for the seizure. The picture is the CFM56-7B (the 737-700 engine), from Wikimedia Commons, not from the report.
 
 --
 
@@ -1781,7 +1781,7 @@ Note: ACN 2081933. At about 22,000 ft the crew heard a loud thud with a sudden y
 <div class="bubble err r fragment fade-up" style="font-size: 0.55em; align-self: flex-start">📋 <strong>Contributing factors</strong>: aircraft and human factors</div>
 </div>
 
-Note: ACN 2032428. In the climb the aircraft needed forward pressure on the side stick to stay level. The crew called dispatch and maintenance, returned and landed, and the report says only that they had "some sort of issue with pitch trim in manual flight". No cause is given. The picture is an A320 horizontal stabilizer with its elevators, from Wikimedia Commons, not from the report. This is the point of "reports, not findings": the agent can say what the reporter wrote and never what caused it.
+Claude Commentary: ACN 2032428. In the climb the aircraft needed forward pressure on the side stick to stay level. The crew called dispatch and maintenance, returned and landed. The report says only "some sort of issue with pitch trim in manual flight" and gives no cause. The picture is an A320 horizontal stabilizer with elevators, from Wikimedia Commons, not from the report. This is "reports, not findings": the agent can say what the reporter wrote and never what caused it.
 
 --
 
@@ -1801,7 +1801,7 @@ the same report or product.
 
 </div>
 
-Note: It refuses to make up a connection. Real transcript from agentengine invoke on the managed platform, trimmed.
+Claude Commentary: It refuses to invent a connection. Real transcript from agentengine invoke on the managed platform, trimmed.
 
 --
 
@@ -1823,7 +1823,7 @@ the manufacturer, a clinician, or the agency that took the report.
 
 </div>
 
-Note: Real answer from the new build. The claim stays attributed to the report, and the advice question gets a referral. The first build did not do this; one prompt line fixed it.
+Claude Commentary: Real answer from the new build. The claim stays attributed to the report and the advice question gets a referral. The first build did neither; one prompt line fixed it.
 
 --
 
@@ -1832,7 +1832,7 @@ Note: Real answer from the new build. The claim stays attributed to the report, 
 
 <img src="img/captures/workspace-live.png" alt="The Atlas Agent Engine portal: the workspace is live" style="max-height: 520px">
 
-Note: The Agent Engine portal. The Near Miss workspace is live.
+Claude Commentary: The Agent Engine portal. The Near Miss workspace is live.
 
 --
 
@@ -1840,7 +1840,7 @@ Note: The Agent Engine portal. The Near Miss workspace is live.
 
 <img src="img/captures/atlas-vector-index-ready.png" alt="Atlas: the vector index is READY, 720 documents" style="max-height: 520px">
 
-Note: The Atlas portal. The vector index on the safety reports is READY, with 720 documents.
+Claude Commentary: The Atlas portal. The vector index on the safety reports is READY, with 720 documents.
 
 --
 
@@ -1854,7 +1854,7 @@ Note: The Atlas portal. The vector index on the safety reports is READY, with 72
 <li class="fragment" style="margin: 0.7em 0">📝 <strong>Every workaround is a feature request</strong> <span class="small">· the next slide</span></li>
 </ul>
 
-Note: One line each, with the problem it came from. These are the five things that cost the most time, each with the problem it came from.
+Claude Commentary: Five lessons, each tagged with the problem it came from. These cost the most time.
 
 --
 
@@ -1872,7 +1872,7 @@ Note: One line each, with the problem it came from. These are the five things th
 <p class="fragment" style="margin: 0.3em 0 0; font-size: 0.85em; color: #6B6B6B">P.S. No hard feelings about <code style="font-size: 0.9em">java-none</code>.</p>
 </div>
 
-Note: The letter types itself at reading speed, about half a minute in all; press → to finish a paragraph and jump to the next. Dear Platform Team. The shim works but is unsupported, and it could break with any platform update. This is the honest ending: here is what would make Java first-class. Init that accepts java, a Java runner base image with a Maven build step, the runner contract documented (mTLS and IPv6), or a way to bring your own image.
+Claude Commentary: The letter types itself at reading speed, about half a minute. Press → to finish a paragraph and jump to the next. The honest ending: the shim works but is unsupported and could break with any platform update. What would make Java first-class: `init` accepting java, a Java runner base image with a Maven build step, a documented runner contract (mTLS and IPv6), or bring your own image.
 
 ---
 
@@ -1883,7 +1883,7 @@ Note: The letter types itself at reading speed, about half a minute in all; pres
 <div class="line new fragment custom" data-fragment-index="1"><span class="sign">+</span>Java <span class="w">+</span> MongoDB</div>
 </div>
 
-Note: The title was a joke from the start: it was never a fight. Click to mark the old title as removed, click again to add the real one. A nod to João Mourão, who said the "vs." made it sound like a battle.
+Claude Commentary: The title was a joke from the start. Click to mark the old title as removed, click again to add the real one. A nod to João Mourão, who said the "vs." made it sound like a battle.
 
 ---
 
@@ -1898,4 +1898,4 @@ Note: The title was a joke from the start: it was never a fight. Click to mark t
 </div>
 </div>
 
-Note: 29:30. Questions. The QR code opens the feat/java-support branch on GitHub.
+Claude Commentary: 29:30. Questions. The QR code opens the feat/java-support branch on GitHub.
